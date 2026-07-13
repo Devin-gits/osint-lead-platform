@@ -1,0 +1,8 @@
+# Python dependencies for the social-footprint module's Maigret wrapper
+# (wrapper/maigret_check.py). Install into the Python environment the Go module
+# will invoke:  pip install -r requirements.txt
+#
+# Pinned to the exact version this module's wrapper + output parsing was verified
+# against (see evaluations/maigret.md, which evaluated 0.6.2). Maigret is
+# MIT-licensed, so embedding it as a library is permitted.
+maigret==0.6.2

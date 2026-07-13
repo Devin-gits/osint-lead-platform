@@ -1,0 +1,190 @@
+package socialfootprint
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// curatedPlatforms is the scope-discipline allow-list: the ONLY sites Maigret is
+// allowed to check, passed explicitly to the wrapper on every call. Maigret's
+// default fans out to hundreds/thousands of sites (evaluations/maigret.md §6),
+// which is exactly the "bulk non-consensual scraping" pattern docs/compliance.md
+// restricts. We instead check a fixed, curated set of ~15 major platforms where
+// a claimed/unclaimed signal is a meaningful "is this a real, active person?"
+// indicator and whose scale is defensible for a per-lead spot check. Changing
+// scope means editing this list in code and re-review — it cannot be widened at
+// runtime.
+var curatedPlatforms = []string{
+	"GitHub", "GitLab", "Reddit", "Twitter", "Instagram",
+	"Pinterest", "Medium", "Telegram", "Keybase", "HackerNews",
+	"Steam", "SoundCloud", "Vimeo", "About.me", "Patreon",
+}
+
+// perSiteTimeoutSeconds is the per-site request timeout handed to the wrapper
+// (Maigret's own --timeout). It is smaller than the whole-run Go timeout, which
+// bounds the subprocess overall.
+const perSiteTimeoutSeconds = 12
+
+// Env overrides for locating the Python interpreter and the wrapper script.
+const (
+	pythonEnv  = "SOCIAL_FOOTPRINT_PYTHON"
+	wrapperEnv = "SOCIAL_FOOTPRINT_WRAPPER"
+)
+
+// platformResult mirrors one entry of the wrapper's JSON "results" array.
+type platformResult struct {
+	Platform   string `json:"platform"`
+	Status     string `json:"status"`
+	URL        string `json:"url"`
+	HTTPStatus int    `json:"http_status"`
+}
+
+// wrapperOutput is the JSON contract the Python wrapper prints on stdout.
+type wrapperOutput struct {
+	Tool           string           `json:"tool"`
+	Version        string           `json:"version"`
+	Username       string           `json:"username"`
+	SitesRequested []string         `json:"sites_requested"`
+	Results        []platformResult `json:"results"`
+	CheckedAt      string           `json:"checked_at"`
+	Error          string           `json:"error"`
+}
+
+// maigretRunner runs a single scope-capped Maigret check for one handle. It is
+// an interface so tests can substitute a fake and run fully offline.
+type maigretRunner interface {
+	run(ctx context.Context, handle string, platforms []string, timeout time.Duration) (wrapperOutput, error)
+}
+
+// subprocessRunner is the production maigretRunner: it invokes the Python wrapper
+// (which embeds Maigret as a library) as a subprocess and parses its JSON.
+type subprocessRunner struct{}
+
+func (s *subprocessRunner) run(ctx context.Context, handle string, platforms []string, timeout time.Duration) (wrapperOutput, error) {
+	python := os.Getenv(pythonEnv)
+	if python == "" {
+		python = "python3"
+	}
+	if _, err := exec.LookPath(python); err != nil {
+		return wrapperOutput{}, fmt.Errorf("python interpreter %q not found; install Python 3.10+ or set %s — see README", python, pythonEnv)
+	}
+
+	wrapper, err := locateWrapper()
+	if err != nil {
+		return wrapperOutput{}, err
+	}
+
+	// The per-site timeout is bounded so the wrapper cannot outlive the Go
+	// context deadline; leave headroom for process start + DB load.
+	siteTimeout := perSiteTimeoutSeconds
+	if secs := int(timeout.Seconds()) - 5; secs > 0 && secs < siteTimeout {
+		siteTimeout = secs
+	}
+
+	// All arguments are passed as an argv slice (no shell), and the platform
+	// list is a fixed in-code constant — never interpolated from lead input —
+	// so neither the handle nor the site list can inject a shell command.
+	args := []string{
+		wrapper,
+		"--username", handle,
+		"--sites", strings.Join(platforms, ","),
+		"--timeout", strconv.Itoa(siteTimeout),
+		"--max-sites", strconv.Itoa(len(platforms)),
+	}
+	cmd := exec.CommandContext(ctx, python, args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		return wrapperOutput{}, fmt.Errorf("maigret check timed out after %s", timeout)
+	}
+
+	// The wrapper prints a JSON object on stdout even on its own error paths, so
+	// try to parse regardless of exit code before treating runErr as fatal.
+	out, parseErr := parseWrapperOutput(stdout.String())
+	if parseErr != nil {
+		if runErr != nil {
+			return wrapperOutput{}, fmt.Errorf("maigret wrapper failed (%v); stderr: %s", runErr, tail(stderr.String(), 200))
+		}
+		return wrapperOutput{}, fmt.Errorf("could not parse maigret wrapper output: %v; stdout: %s", parseErr, tail(stdout.String(), 200))
+	}
+	return out, nil
+}
+
+// locateWrapper finds maigret_check.py. Order: explicit env override, then
+// alongside the running binary (wrapper/maigret_check.py and ./maigret_check.py),
+// then relative to this source file's directory (covers `go test`/`go run` where
+// the binary lives in a temp dir).
+func locateWrapper() (string, error) {
+	if p := os.Getenv(wrapperEnv); p != "" {
+		if fileExists(p) {
+			return p, nil
+		}
+		return "", fmt.Errorf("%s=%q does not exist", wrapperEnv, p)
+	}
+
+	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(dir, "wrapper", "maigret_check.py"),
+			filepath.Join(dir, "maigret_check.py"),
+		)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(wd, "wrapper", "maigret_check.py"),
+			filepath.Join(wd, "..", "wrapper", "maigret_check.py"),
+			filepath.Join(wd, "..", "..", "wrapper", "maigret_check.py"),
+		)
+	}
+	for _, c := range candidates {
+		if fileExists(c) {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("maigret wrapper script not found; set %s to the path of wrapper/maigret_check.py — see README", wrapperEnv)
+}
+
+func parseWrapperOutput(s string) (wrapperOutput, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return wrapperOutput{}, fmt.Errorf("empty output")
+	}
+	// The wrapper prints exactly one JSON object; if any stray lines precede it,
+	// take the last non-empty line (the emit()).
+	if i := strings.LastIndex(s, "\n"); i >= 0 {
+		last := strings.TrimSpace(s[i+1:])
+		if strings.HasPrefix(last, "{") {
+			s = last
+		}
+	}
+	var out wrapperOutput
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return wrapperOutput{}, err
+	}
+	return out, nil
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+func tail(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return "..." + s[len(s)-n:]
+	}
+	return s
+}
