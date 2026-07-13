@@ -11,6 +11,9 @@ import (
 // in on stdin, an augmented record out on stdout, an audit line on stderr. It
 // uses a real email so the underlying verifier actually runs (requires network).
 func TestRun_EndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network-dependent test in short mode")
+	}
 	in := strings.NewReader(`{"name":"Jane","email":"support@github.com","company":"Acme"}`)
 	var out, errOut bytes.Buffer
 
