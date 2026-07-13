@@ -25,7 +25,7 @@ import (
 	"os"
 	"time"
 
-	emailvalidate "github.com/Shinydev09/osint-lead-platform/modules/email-validate"
+	emailvalidate "github.com/Moyeil-73/osint-lead-platform/modules/email-validate"
 )
 
 // resultKey is the namespaced key added to the lead record. Kept in one place

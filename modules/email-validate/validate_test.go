@@ -10,6 +10,9 @@ import (
 // the actual returned Result. The valid case performs a live DNS/MX lookup, so
 // this test requires outbound network.
 func TestValidate_RealEmails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network-dependent test in short mode")
+	}
 	val := NewValidator(15 * time.Second)
 
 	t.Run("valid well-known address", func(t *testing.T) {
