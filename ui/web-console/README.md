@@ -16,18 +16,28 @@ A Next.js 15 App Router control plane for the OSINT Lead Enrichment Platform.
 
 Requires Node.js 20+ and `npm`.
 
+The UI talks to the real control-plane API. Run both in separate terminals:
+
 ```bash
+# Terminal 1 — Go control plane
+cd services/control-plane
+go run ./cmd/server
+```
+
+```bash
+# Terminal 2 — Next.js UI
 cd ui/web-console
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The API is expected at
+`http://localhost:8080` by default; set `NEXT_PUBLIC_API_BASE_URL` to override.
 
 ## Build & quality gates
 
 ```bash
-npm run build      # production build (do not enable output: 'export' in v1)
+npm run build      # production build
 npm run typecheck  # tsc --noEmit
 npm run lint       # next lint
 ```
@@ -36,7 +46,7 @@ npm run lint       # next lint
 
 - All UI code lives under `ui/web-console/**`.
 - This PR intentionally does not touch `modules/**`, Go code, or evaluations.
-- The app runs in Node server mode by default so Next.js App Router API routes can be added in PR2.
-- A client-side seed fallback will be added in `lib/api/client.ts` for resilience, but `output: 'export'` is not a v1 target.
-- Every mock-data screen shows the persistent `MockDataBanner`.
+- The app runs in Node server mode; no `output: 'export'` target in v1.
+- API client, types, and TanStack Query hooks live in `lib/api/**`.
+- The `EnvironmentBanner` and top-bar badge reflect live API connectivity.
 - Design tokens are defined in `lib/theme/tokens.ts` and mirrored as CSS custom properties in `app/globals.css`; no one-off colors in pages.
