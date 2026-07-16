@@ -179,7 +179,7 @@ func deriveRiskFlags(r Result) []string {
 	case "pager":
 		flags = append(flags, "pager")
 	}
-	if r.Carrier == "" || r.Carrier == unknown {
+	if r.Numverify.Status == StatusOK && (r.Carrier == "" || r.Carrier == unknown) {
 		flags = append(flags, "carrier_unknown")
 	}
 	return flags

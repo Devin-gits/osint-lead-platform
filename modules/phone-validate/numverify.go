@@ -100,8 +100,13 @@ func newNumverifyClientFromEnv() *numverifyClient {
 	cfg := numverifyConfig{}
 
 	if path := os.Getenv("NUMVERIFY_CONFIG"); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(data, &cfg)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "NUMVERIFY_CONFIG: failed to read %s: %v\n", path, err)
+		} else {
+			if err := json.Unmarshal(data, &cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "NUMVERIFY_CONFIG: failed to parse %s: %v\n", path, err)
+			}
 		}
 	}
 
