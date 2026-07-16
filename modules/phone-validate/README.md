@@ -43,7 +43,7 @@ take a runtime dependency on PhoneInfoga**. Instead it builds the local scanner
 directly on the same engine PhoneInfoga's `local` scanner wraps —
 [`github.com/nyaruka/phonenumbers`](https://github.com/nyaruka/phonenumbers), the
 **MIT-licensed, actively-maintained** Go port of Google's libphonenumber (latest
-`v2.0.3`, pushed 2026-07-10). This is precisely the substitution the decision doc
+`v1.5.0`, the latest v1 release at the time of the Go 1.22.5 pin). This is precisely the substitution the decision doc
 anticipated ("evaluate whether a maintained phone-parsing library — Google's
 libphonenumber — can replace the local scanner entirely, reducing our exposure to
 the archived repo"). If PhoneInfoga is archived tomorrow, this module is
@@ -186,7 +186,7 @@ configured** (numverify skipped, local scanner only):
       "national": "(415) 200-7986",
       "country_code": 1,
       "checked_at": "2026-07-13T14:19:05Z",
-      "source_tool": "nyaruka/phonenumbers@v2.0.3 (libphonenumber; PhoneInfoga local-scanner engine)"
+      "source_tool": "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)"
     },
     "numverify": {
       "status": "skipped",
@@ -196,7 +196,7 @@ configured** (numverify skipped, local scanner only):
     },
     "checked_at": "2026-07-13T14:19:05Z",
     "source_tools": [
-      "nyaruka/phonenumbers@v2.0.3 (libphonenumber; PhoneInfoga local-scanner engine)"
+      "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)"
     ]
   }
 }
@@ -205,7 +205,7 @@ configured** (numverify skipped, local scanner only):
 Audit lines on stderr for the same call (one per source, phone redacted):
 
 ```json
-{"tool":"nyaruka/phonenumbers@v2.0.3 (libphonenumber; PhoneInfoga local-scanner engine)","checked_at":"2026-07-13T14:19:05Z","phone":"+14*******86","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
+{"tool":"nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)","checked_at":"2026-07-13T14:19:05Z","phone":"+14*******86","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
 {"tool":"numverify (apilayer) /validate","checked_at":"2026-07-13T14:19:05Z","phone":"+14*******86","status":"skipped","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
 ```
 
@@ -279,7 +279,7 @@ verdict (real capture 2026-07-13 against a local numverify-schema stub — see
     "source_tool": "numverify (apilayer) /validate"
   },
   "source_tools": [
-    "nyaruka/phonenumbers@v2.0.3 (libphonenumber; PhoneInfoga local-scanner engine)",
+    "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)",
     "numverify (apilayer) /validate"
   ]
 }
@@ -318,9 +318,8 @@ go test ./...
 
 ## Dependencies
 
-- Go (built and tested with **1.24.0**; `go.mod` requires `go 1.24.0`, matching
-  the `github.com/nyaruka/phonenumbers/v2` requirement).
-- `github.com/nyaruka/phonenumbers/v2 v2.0.3` (**MIT**), pinned in `go.mod` —
+- Go (built and tested with **1.22.5**; `go.mod` requires `go 1.22.5`).
+- `github.com/nyaruka/phonenumbers` v1.5.0 (**MIT**), pinned in `go.mod` —
   the maintained libphonenumber engine that powers the local scanner, including
   its `carrier` subpackage for offline carrier lookup.
 - **No PhoneInfoga runtime dependency** (GPL-3.0, self-declared unmaintained —

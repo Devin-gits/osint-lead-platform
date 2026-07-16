@@ -1,6 +1,6 @@
-# Contributing (Stage 1 — Research)
+# Contributing (Stage 2 — Build modules)
 
-This repo is currently in **Stage 1: research only**. No integration code is written until a module's tool choice has an approved evaluation. This applies equally to human and AI-agent contributors.
+The repo has moved from Stage 1 (research) into **Stage 2: implement approved modules**. Historical evaluations live in `evaluations/`; adoption decisions are in `docs/decisions/stage-1-decision.md`. New work targets `modules/<name>/` for modules that the decision doc has already cleared, and must follow the module contract in `docs/architecture.md` / `docs/codemap/01-module-contract.md`.
 
 ## Scoping a research task
 
@@ -22,22 +22,20 @@ Each task = one tool, one deliverable file: `evaluations/<tool-slug>.md`, copied
 >
 > Cite every claim with a link. Do not modify anything outside `evaluations/{tool-slug}.md`. Open a PR titled `research: evaluate {TOOL}` against `main`.
 
-### Current priority list (Stage 1)
+### Stage 2 implementation backlog
 
-- [ ] `web-check` — domain-intel
-- [ ] `theHarvester` — domain-intel / company-enrich
-- [ ] `AfterShip/email-verifier` — email-validate
-- [ ] `holehe` — email-validate
-- [ ] `phoneinfoga` — phone-validate
-- [ ] `maigret` — social-footprint
-- [ ] `spiderfoot` — orchestration
-- [ ] `firecrawl` — extraction
-- [ ] `crawl4ai` — extraction
-- [ ] `OpenOSINT` — AI-agent orchestration layer
-- [ ] `waterfall-gtm` — company-enrich architecture reference
-- [ ] `h8mail` — risk/breach signal (read `docs/compliance.md` first — medium/high risk category)
+Only modules explicitly moved to Stage 2 in `docs/decisions/stage-1-decision.md` may have a `modules/<name>/` branch open:
 
-Add new rows here as new candidates surface; don't duplicate an existing evaluation.
+- [x] `modules/email-validate` — AfterShip email-verifier
+- [x] `modules/domain-intel` — web-check-lite + theHarvester (subprocess)
+- [x] `modules/phone-validate` — nyaruka/phonenumbers + optional numverify
+- [x] `modules/social-footprint` — Maigret (Python library via wrapper)
+- [ ] `modules/extraction` — Crawl4AI primary, Firecrawl adapter optional
+- [ ] `modules/company-enrich` — blocked pending evaluation of `local-enrichment-tool`
+- [ ] lightweight pipeline runner / orchestration
+- [ ] storage, retention, and CRM-ready scoring
+
+Research-only exceptions: if a new tool is needed for an approved module, open a research PR under `evaluations/<tool-slug>.md` using `evaluations/TEMPLATE.md`.
 
 ## PR review process
 

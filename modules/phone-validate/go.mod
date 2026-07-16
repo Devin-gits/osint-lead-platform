@@ -1,4 +1,4 @@
-module github.com/Shinydev09/osint-lead-platform/modules/phone-validate
+module github.com/Moyeil-73/osint-lead-platform/modules/phone-validate
 
 go 1.22.5
 

@@ -2,9 +2,9 @@
 
 A platform to **enrich and validate leads generated from ads and business websites**, where explicit permission to process that data has been obtained. Built collaboratively by human + AI agents, with each stage gated by research and review before any code lands.
 
-## Status: Stage 1 — Research (in progress)
+## Status: Stage 2 — Build modules (in progress)
 
-We do not write integration code until the tools that power each module have been evaluated and approved. See `docs/research/osint-tooling-research.md` for the full tool survey and `evaluations/` for individual scorecards as they land.
+Stage 1 research is complete. Tool choices and adoption decisions live in `docs/decisions/stage-1-decision.md`; the full survey is in `docs/research/osint-tooling-research.md`. Implementation PRs now target `modules/<name>/` for approved modules and must follow the module contract in `docs/architecture.md` / `docs/codemap/01-module-contract.md`.
 
 ## Pipeline
 

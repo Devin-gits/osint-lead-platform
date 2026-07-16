@@ -29,7 +29,7 @@ import (
 	"os"
 	"time"
 
-	socialfootprint "github.com/Shinydev09/osint-lead-platform/modules/social-footprint"
+	socialfootprint "github.com/Moyeil-73/osint-lead-platform/modules/social-footprint"
 )
 
 // resultKey is the namespaced key added to the lead record. Kept in one place so

@@ -261,7 +261,7 @@ run against the real embedded Maigret 0.6.2 during development.
 
 ## Dependencies
 
-- Go (built and tested with the toolchain pinned in `go.mod`, `go 1.24.0`).
+- Go (built and tested with the toolchain pinned in `go.mod`, `go 1.22.5`).
   **No third-party Go dependencies** (standard library only).
 - **Python 3.10+** with **`maigret==0.6.2`** (**MIT**), pinned in
   [`requirements.txt`](requirements.txt) — embedded as a library by the wrapper,
