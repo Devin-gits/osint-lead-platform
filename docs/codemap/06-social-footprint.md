@@ -24,21 +24,22 @@ func NewValidator(timeout, minInterval time.Duration) *Validator
 func (v *Validator) Check(lead map[string]interface{}) (Result, []AuditRecord)
 ```
 
-Unlike other modules, `Check` takes the **whole lead map** (needs email + optional domain_intel).
+Unlike other modules, `Check` takes the **whole lead map** (`email` or `username` + optional `domain_intel`).
 
 ## Handle derivation (`handles.go`)
 
 Priority order, deduped, then capped at `MaxHandles`:
 
-1. **email local-part** (`jane.smith@x` → `jane.smith`); strip `+tag`
-2. **email variants** (if dotted/separated): `janesmith`, `jsmith`
-3. **domain_intel.harvester** (optional): email local-parts from discovered emails; leading hostname labels excluding `infraLabels`
+1. **direct `username`** (optional): an explicit handle supplied by a caller or the CLI `-username` flag.
+2. **email local-part** (`jane.smith@x` → `jane.smith`); strip `+tag`
+3. **email variants** (if dotted/separated): `janesmith`, `jsmith`
+4. **domain_intel.harvester** (optional): email local-parts from discovered emails; leading hostname labels excluding `infraLabels`
 
 `normalizeHandle` strips common copy-paste noise: leading `@`, `http(s)://` / `www.` prefixes, trailing query strings, and final path segments. Only letters, digits, `.`, `_`, and `-` are kept; handles under 2 characters or with no letter are rejected.
 
 No usable handle → top-level `status: "skipped"` (not `unknown`).
 
-Origins: `email-local-part` | `email-variant` | `domain-intel-harvester`.
+Origins: `direct` | `email-local-part` | `email-variant` | `domain-intel-harvester`.
 
 ## Compliance guardrails (code-enforced)
 
@@ -79,10 +80,14 @@ Widening scope requires code change + compliance re-review.
 
 ```bash
 cd modules/social-footprint
-pip install -r requirements.txt   # maigret==0.6.2
-go build -o social-footprint ./cmd/social-footprint
-export SOCIAL_FOOTPRINT_WRAPPER="$PWD/wrapper/maigret_check.py"
-echo '{"email":"soxoj@example.com"}' | ./social-footprint
+make pydeps                       # pip install -r requirements.txt
+make build                        # go build -o bin/social-footprint ./cmd/social-footprint
+
+export SOCIAL_FOOTPRINT_WRAPPER="$PWD/wrapper/maigret_check.py"  # optional; auto-located
+
+echo '{"email":"soxoj@example.com"}' | ./bin/social-footprint
+./bin/social-footprint --username soxoj --timeout 60s
+./bin/social-footprint --email jane.smith@acme.com --timeout 60s
 ```
 
 | Env | Default | Meaning |
