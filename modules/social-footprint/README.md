@@ -262,6 +262,34 @@ the first `MaxHandles` of them.
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` | Python interpreter to run the wrapper. |
 | `SOCIAL_FOOTPRINT_WRAPPER` | *(auto)* | Path to `wrapper/maigret_check.py`. Auto-located next to the binary or under the module dir; set explicitly if installed elsewhere. |
 
+## Sherlock backend (optional second engine)
+
+In addition to Maigret, the module supports [Sherlock](https://github.com/sherlock-project/sherlock) (MIT) as a
+second backend. Sherlock maintains an independent site database, providing better cross-validation coverage.
+
+Select the backend via `SOCIAL_FOOTPRINT_BACKEND`:
+
+| Value | Behaviour |
+|---|---|
+| `maigret` (default) | Maigret only — existing behaviour, unchanged |
+| `sherlock` | Sherlock only via `wrapper/sherlock_check.py` |
+| `both` | Maigret first, then Sherlock; Sherlock upgrades Maigret's `unknown` answers to definitive where possible; Maigret's definitive results are never downgraded |
+
+**Install:**
+```bash
+pip install -r requirements.txt    # now includes sherlock-project==0.16.1
+```
+
+**Optional env vars:**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use |
+| `SOCIAL_FOOTPRINT_SHERLOCK_PYTHON` | Falls back to `SOCIAL_FOOTPRINT_PYTHON`, then `python3` | Python interpreter for Sherlock wrapper |
+| `SOCIAL_FOOTPRINT_SHERLOCK_WRAPPER` | *(auto-located)* | Explicit path to `wrapper/sherlock_check.py` |
+
+The I/O contract, compliance guardrails (14-platform curated scope, no proxy, minimal collection), and audit format are identical to the Maigret backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
+
 ## Test
 
 ```bash

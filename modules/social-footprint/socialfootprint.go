@@ -39,6 +39,7 @@ package socialfootprint
 import (
 	"context"
 	"math"
+	"os"
 	"strconv"
 	"time"
 )
@@ -70,6 +71,16 @@ const DefaultMinInterval = 5 * time.Second
 // lead, bounding the fan-out of a single call (each handle is one Maigret run
 // over the curated platform list).
 const MaxHandles = 3
+
+// Backend constants — select via SOCIAL_FOOTPRINT_BACKEND env var.
+const (
+	BackendMaigret  = "maigret" // default
+	BackendSherlock = "sherlock"
+	BackendBoth     = "both" // consensus merge
+
+	// SourceToolSherlock identifies the Sherlock engine in audit records.
+	SourceToolSherlock = "sherlock-project/sherlock@0.16.1 (embedded Python library via wrapper subprocess)"
+)
 
 // statusOK / statusSkipped / statusUnknown are the module-level status values.
 // "skipped" means correctly nothing to check (no derivable handle); "unknown"
@@ -139,19 +150,46 @@ type Validator struct {
 	runner  maigretRunner // pluggable so tests can inject a fake instead of Python
 }
 
-// NewValidator builds a Validator. A non-positive timeout uses DefaultTimeout; a
-// non-positive minInterval uses DefaultMinInterval.
+// NewValidator builds a Validator with the default (Maigret) backend.
+// SOCIAL_FOOTPRINT_BACKEND env var can override the backend at runtime.
 func NewValidator(timeout, minInterval time.Duration) *Validator {
+	return NewValidatorWithBackend(timeout, minInterval, "")
+}
+
+// NewValidatorWithBackend builds a Validator with an explicit backend choice.
+// SOCIAL_FOOTPRINT_BACKEND env var takes precedence over the backend parameter.
+// An empty backend string defaults to BackendMaigret.
+func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string) *Validator {
+	if env := os.Getenv("SOCIAL_FOOTPRINT_BACKEND"); env != "" {
+		backend = env
+	}
+	if backend == "" {
+		backend = BackendMaigret
+	}
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
 	if minInterval <= 0 {
 		minInterval = DefaultMinInterval
 	}
+
+	var runner maigretRunner
+	switch backend {
+	case BackendSherlock:
+		runner = &sherlockRunner{}
+	case BackendBoth:
+		runner = &bothRunner{
+			primary:   &subprocessRunner{},
+			secondary: &sherlockRunner{},
+		}
+	default: // BackendMaigret and unknown values
+		runner = &subprocessRunner{}
+	}
+
 	return &Validator{
 		timeout: timeout,
 		limiter: newRateLimiter(minInterval),
-		runner:  &subprocessRunner{},
+		runner:  runner,
 	}
 }
 
