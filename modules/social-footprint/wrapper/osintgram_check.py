@@ -212,44 +212,55 @@ def main(argv=None):
 
     python = sys.executable or os.environ.get("PYTHON", "python3")
 
-    # If a credentials.ini path is supplied, copy it into the Osintgram checkout
-    # so main.py can find it without the wrapper ever reading the password.
-    creds_path = os.environ.get(CREDENTIALS_ENV)
-    if creds_path:
-        try:
-            config_dir = os.path.join(home, "config")
-            os.makedirs(config_dir, exist_ok=True)
-            shutil.copy(creds_path, os.path.join(config_dir, "credentials.ini"))
-        except Exception as e:
-            emit(
-                build_output(
-                    handle,
-                    [],
-                    error=f"could not copy {CREDENTIALS_ENV}={creds_path!r} into Osintgram config: {e}",
-                ),
-                0,
-            )
-
-    tmpdir = tempfile.mkdtemp(prefix="osintgram_wrapper_")
+    # Run Osintgram from a disposable working directory so:
+    #   - the operator's checkout is never modified;
+    #   - config/credentials.ini resolves to a temp copy we control;
+    #   - output lands in a per-invocation temp directory that is deleted afterwards.
+    workdir = tempfile.mkdtemp(prefix="osintgram_run_")
     try:
+        creds_path = os.environ.get(CREDENTIALS_ENV)
+        if creds_path:
+            try:
+                config_dir = os.path.join(workdir, "config")
+                os.makedirs(config_dir, exist_ok=True)
+                shutil.copy(creds_path, os.path.join(config_dir, "credentials.ini"))
+            except Exception as e:
+                emit(
+                    build_output(
+                        handle,
+                        [],
+                        error=(
+                            f"could not copy {CREDENTIALS_ENV}={creds_path!r} "
+                            f"into temp config: {e}"
+                        ),
+                    ),
+                    0,
+                )
+
+        output_dir = os.path.join(workdir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+
         env = os.environ.copy()
+        # Ensure main.py can find its own src/ package even though cwd is workdir.
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = home + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
         # Both the --json flag and the JSON=y toggle are set; one of them is
         # enough across the Osintgram versions we support.
         env["JSON"] = "y"
 
         cmd = [
             python,
-            "main.py",
+            main_py,
             handle,
             "--command", args.command,
             "--json",
-            "--output", tmpdir,
+            "--output", output_dir,
         ]
 
         try:
             proc = subprocess.run(
                 cmd,
-                cwd=home,
+                cwd=workdir,
                 env=env,
                 capture_output=True,
                 text=True,
@@ -266,7 +277,7 @@ def main(argv=None):
             )
 
         # Prefer the generated JSON file.
-        json_file = find_json_file(tmpdir, handle)
+        json_file = find_json_file(output_dir, handle)
         if json_file:
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
@@ -284,10 +295,12 @@ def main(argv=None):
                 )
             emit(build_output(handle, [normalize_info(data, handle)]), 0)
 
-        # No JSON file: inspect stdout/stderr for known states.
+        # No JSON file: inspect stdout/stderr for the explicit not-found signal.
+        # Generic non-zero exits, login failures, challenges, and rate-limits
+        # must NOT be reported as "available".
         combined = ((proc.stdout or "") + "\n" + (proc.stderr or "")).lower()
-        not_found_markers = ["non exist", "not exist", "user not found", "not found"]
-        if proc.returncode == 2 or any(m in combined for m in not_found_markers):
+        not_found_markers = ["non exist", "user not found"]
+        if proc.returncode == 2 and any(m in combined for m in not_found_markers):
             emit(build_output(handle, [available_result(handle)]), 0)
 
         error_msg = (
@@ -296,10 +309,9 @@ def main(argv=None):
         )
         emit(build_output(handle, [], error=error_msg), 0)
     finally:
-        # Best-effort cleanup of temp output; do not leak on failure.
+        # Best-effort cleanup of temp working dir/output; do not leak on failure.
         try:
-            import shutil
-            shutil.rmtree(tmpdir, ignore_errors=True)
+            shutil.rmtree(workdir, ignore_errors=True)
         except Exception:
             pass
 

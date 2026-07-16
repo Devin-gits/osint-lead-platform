@@ -62,10 +62,10 @@ func (o *osintgramRunner) run(ctx context.Context, handle string, platforms []st
 	}
 
 	cmd := exec.CommandContext(ctx, python, args...)
-	// main.py resolves config/credentials.ini relative to its working directory.
-	cmd.Dir = home
-	// Pass through the operator's environment so HIKERAPI_TOKEN and any
-	// credentials.ini path config reach Osintgram. Secrets are never logged.
+	// The wrapper creates its own disposable working directory, copies an
+	// optional credentials.ini there, and runs Osintgram via PYTHONPATH so the
+	// operator's checkout is never modified. We still pass through the operator's
+	// environment so HIKERAPI_TOKEN reaches Osintgram. Secrets are never logged.
 	cmd.Env = os.Environ()
 
 	var stdout, stderr strings.Builder

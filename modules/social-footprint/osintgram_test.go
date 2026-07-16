@@ -53,7 +53,16 @@ func runWrapper(t *testing.T, env map[string]string, args ...string) (string, in
 }
 
 func TestOsintgramWrapper_CommandAllowlist(t *testing.T) {
-	stdout, _ := runWrapper(t, nil, "--handle", "x", "--command", "photos")
+	// If the allowlist failed, this main.py would print "EXECUTED" and exit 1.
+	home := fakeOsintgramHome(t, `import sys
+print("EXECUTED")
+sys.exit(1)
+`)
+	env := map[string]string{"SOCIAL_FOOTPRINT_OSINTGRAM_HOME": home}
+	stdout, _ := runWrapper(t, env, "--handle", "x", "--command", "photos")
+	if strings.Contains(stdout, "EXECUTED") {
+		t.Fatal("banned command still executed Osintgram main.py")
+	}
 	var out wrapperOutput
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("wrapper output is not JSON: %v\n%s", err, stdout)
@@ -154,6 +163,79 @@ with open(os.path.join(out_dir, args.id + "_info.json"), "w") as f:
 	// Public email string itself must not be present in the normalized output.
 	if strings.Contains(stdout, "press@natgeo.com") {
 		t.Error("wrapper output leaked the raw public email string")
+	}
+}
+
+func TestOsintgramWrapper_LoginChallengeIsUnknown(t *testing.T) {
+	// A login/challenge failure must degrade to unknown, never to available.
+	home := fakeOsintgramHome(t, `import sys
+print("challenge_required: please check your account")
+sys.exit(2)
+`)
+	env := map[string]string{"SOCIAL_FOOTPRINT_OSINTGRAM_HOME": home}
+	stdout, _ := runWrapper(t, env, "--handle", "x", "--command", "info")
+	var out wrapperOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("wrapper output is not JSON: %v\n%s", err, stdout)
+	}
+	if len(out.Results) != 0 {
+		t.Fatalf("expected no results for login/challenge failure, got %+v", out.Results)
+	}
+	if out.Error == "" {
+		t.Error("expected error note for login/challenge failure")
+	}
+}
+
+func TestOsintgramWrapper_AmbiguousNotFoundPhraseIsUnknown(t *testing.T) {
+	// Generic "not found" phrases without the explicit user-not-found exit code
+	// and marker must be treated as unknown.
+	home := fakeOsintgramHome(t, `import sys
+print("page not found: internal error")
+sys.exit(1)
+`)
+	env := map[string]string{"SOCIAL_FOOTPRINT_OSINTGRAM_HOME": home}
+	stdout, _ := runWrapper(t, env, "--handle", "x", "--command", "info")
+	var out wrapperOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("wrapper output is not JSON: %v\n%s", err, stdout)
+	}
+	if len(out.Results) != 0 {
+		t.Fatalf("expected unknown (no results) for ambiguous failure, got %+v", out.Results)
+	}
+	if out.Error == "" {
+		t.Error("expected error note for ambiguous failure")
+	}
+}
+
+func TestOsintgramWrapper_CredentialsAndTokenRedacted(t *testing.T) {
+	home := fakeOsintgramHome(t, `import sys
+print("some error")
+sys.exit(1)
+`)
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "credentials.ini")
+	secret := "ig_password_12345_super_secret"
+	if err := os.WriteFile(creds, []byte("[Credentials]\nusername=test\npassword="+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{
+		"SOCIAL_FOOTPRINT_OSINTGRAM_HOME":       home,
+		"SOCIAL_FOOTPRINT_OSINTGRAM_CREDENTIALS": creds,
+		"HIKERAPI_TOKEN":                        "hiker_secret_token_xyz",
+	}
+	stdout, _ := runWrapper(t, env, "--handle", "x", "--command", "info")
+	combined := stdout // wrapper captures its own stderr into stdout for this helper
+	for _, s := range []string{secret, "hiker_secret_token_xyz"} {
+		if strings.Contains(combined, s) {
+			t.Errorf("wrapper output leaked secret %q", s)
+		}
+	}
+	var out wrapperOutput
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("wrapper output is not JSON: %v\n%s", err, stdout)
+	}
+	if out.Error == "" {
+		t.Error("expected error note for subprocess failure")
 	}
 }
 

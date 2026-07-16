@@ -58,8 +58,10 @@ type wrapperOutput struct {
 	Error          string           `json:"error"`
 }
 
-// maigretRunner runs a single scope-capped Maigret check for one handle. It is
-// an interface so tests can substitute a fake and run fully offline.
+// maigretRunner is the shared backend-runner interface for this module. Despite
+// the name (it was introduced for Maigret), it is implemented by Maigret,
+// Sherlock, and Osintgram runners so the Validator can swap backends without a
+// parallel orchestration path.
 type maigretRunner interface {
 	run(ctx context.Context, handle string, platforms []string, timeout time.Duration) (wrapperOutput, error)
 }
