@@ -1,0 +1,20 @@
+name: social-footprint CI
+on:
+  push:
+    paths:
+      - 'modules/social-footprint/**'
+      - '.github/workflows/social-footprint-ci.yml'
+  pull_request:
+    paths:
+      - 'modules/social-footprint/**'
+      - '.github/workflows/social-footprint-ci.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.5'
+      - run: cd modules/social-footprint && go test ./...
+      - run: cd modules/social-footprint && go build ./...
