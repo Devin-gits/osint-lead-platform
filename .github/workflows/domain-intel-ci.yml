@@ -1,0 +1,20 @@
+name: domain-intel CI
+on:
+  push:
+    paths:
+      - 'modules/domain-intel/**'
+      - '.github/workflows/domain-intel-ci.yml'
+  pull_request:
+    paths:
+      - 'modules/domain-intel/**'
+      - '.github/workflows/domain-intel-ci.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.5'
+      - run: cd modules/domain-intel && go test ./...
+      - run: cd modules/domain-intel && go build ./...
