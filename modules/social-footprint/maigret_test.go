@@ -193,6 +193,43 @@ func TestSubprocessRunner_Timeout(t *testing.T) {
 	}
 }
 
+// TestParseWrapperOutput_NestedObjectAfterArray verifies the fallback JSON scanner
+// extracts the full top-level object even when it contains an array followed by
+// another nested object. The old brace counter treated '[' and ']' as object
+// boundaries, which could either cause an early return at the nested object or
+// overshoot the real top-level '}' after depth went negative.
+func TestParseWrapperOutput_NestedObjectAfterArray(t *testing.T) {
+	// results is an array; metadata is an object after it, then the top-level object
+	// closes. A brace counter that mishandles arrays would return the inner object
+	// or fail to return at all.
+	stdout := `warning: stray log
+{
+  "tool": "maigret",
+  "username": "soxoj",
+  "results": [
+    {"platform": "GitHub", "status": "claimed", "url": "https://github.com/soxoj", "http_status": 200}
+  ],
+  "metadata": {"platform_count": 15},
+  "checked_at": "2026-07-13T00:00:00Z",
+  "error": ""
+}
+trailing noise`
+	got, err := parseWrapperOutput(stdout)
+	if err != nil {
+		t.Fatalf("parseWrapperOutput error = %v", err)
+	}
+	if got.Username != "soxoj" {
+		t.Errorf("username = %q, want soxoj", got.Username)
+	}
+	if len(got.Results) != 1 || got.Results[0].Platform != "GitHub" {
+		t.Errorf("results = %+v, want one GitHub hit", got.Results)
+	}
+	// The whole object must be captured, including the trailing metadata field.
+	if got.CheckedAt != "2026-07-13T00:00:00Z" {
+		t.Errorf("checked_at = %q, want full top-level object to be captured", got.CheckedAt)
+	}
+}
+
 // TestSubprocessRunner_RealMaigret does one live network check against the real
 // embedded Maigret. It is intentionally conservative: it asks for a single
 // platform with a username that is highly likely to be "available" on GitHub,

@@ -30,7 +30,7 @@ Unlike other modules, `Check` takes the **whole lead map** (`email` or `username
 
 Priority order, deduped, then capped at `MaxHandles`:
 
-1. **direct `username`** (optional): an explicit handle supplied by a caller or the CLI `-username` flag.
+1. **direct `username`** (optional): an explicit handle supplied by a caller or the CLI `--username` flag.
 2. **email local-part** (`jane.smith@x` → `jane.smith`); strip `+tag`
 3. **email variants** (if dotted/separated): `janesmith`, `jsmith`
 4. **domain_intel.harvester** (optional): email local-parts from discovered emails; leading hostname labels excluding `infraLabels`
@@ -88,7 +88,16 @@ export SOCIAL_FOOTPRINT_WRAPPER="$PWD/wrapper/maigret_check.py"  # optional; aut
 echo '{"email":"soxoj@example.com"}' | ./bin/social-footprint
 ./bin/social-footprint --username soxoj --timeout 60s
 ./bin/social-footprint --email jane.smith@acme.com --timeout 60s
+./bin/social-footprint --username soxoj --email jane.smith@acme.com --timeout 60s
 ```
+
+Flags augment/override the `stdin` JSON record:
+
+- `--username HANDLE` — explicit handle to check; injected as `lead["username"]` and takes priority over email-derived handles.
+- `--email ADDRESS` — injected as `lead["email"]`; overrides or supplies the email field from `stdin`.
+- `--timeout DURATION` — per-handle subprocess timeout; when set, overrides `SOCIAL_FOOTPRINT_TIMEOUT`.
+
+When run from a terminal (no pipe on `stdin`), an empty/missing `stdin` is allowed and the flags populate the lead record. At least one of `--username`, `--email`, or a lead record on `stdin` must be provided.
 
 | Env | Default | Meaning |
 |-----|---------|---------|
