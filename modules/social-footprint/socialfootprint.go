@@ -44,6 +44,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -148,11 +149,14 @@ type AuditRecord struct {
 // to reuse across leads; reuse is in fact how the in-process rate limiter spaces
 // out consecutive per-lead calls.
 type Validator struct {
-	timeout   time.Duration
-	limiter   *rateLimiter
-	runner    maigretRunner // pluggable so tests can inject a fake instead of Python
-	backend   string        // active backend: BackendMaigret, BackendSherlock, or BackendBoth
-	platforms []string      // platform allow-list passed to runner.run() for this backend
+	timeout             time.Duration
+	limiter             *rateLimiter
+	runner              maigretRunner // pluggable so tests can inject a fake instead of Python
+	backend             string        // active backend: BackendMaigret, BackendSherlock, or BackendBoth
+	platforms           []string      // platform allow-list passed to runner.run() for this backend
+	spiderfootEnabled   bool          // optional second source, controlled by SOCIAL_FOOTPRINT_SPIDERFOOT_ENABLED
+	spiderfootRunner    maigretRunner // nil when SpiderFoot enrichment is disabled
+	spiderfootPlatforms []string      // platform allow-list for the SpiderFoot wrapper
 }
 
 // NewValidator builds a Validator with the default (Maigret) backend.
@@ -196,12 +200,32 @@ func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string)
 		platforms = curatedPlatforms
 	}
 
+	spiderfootEnabled := strings.ToLower(os.Getenv(spiderfootEnvEnabled)) == "true"
+	var spiderfootRunner_ maigretRunner
+	spiderfootPlatforms := []string(nil)
+	if spiderfootEnabled {
+		spiderfootRunner_ = &spiderfootRunner{}
+		maxSF := 15
+		if v := os.Getenv(spiderfootEnvMaxSites); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				maxSF = n
+			}
+		}
+		if maxSF > len(spiderfootCuratedPlatforms) {
+			maxSF = len(spiderfootCuratedPlatforms)
+		}
+		spiderfootPlatforms = spiderfootCuratedPlatforms[:maxSF]
+	}
+
 	return &Validator{
-		timeout:   timeout,
-		limiter:   newRateLimiter(minInterval),
-		runner:    runner,
-		backend:   backend,
-		platforms: platforms,
+		timeout:             timeout,
+		limiter:             newRateLimiter(minInterval),
+		runner:              runner,
+		backend:             backend,
+		platforms:           platforms,
+		spiderfootEnabled:   spiderfootEnabled,
+		spiderfootRunner:    spiderfootRunner_,
+		spiderfootPlatforms: spiderfootPlatforms,
 	}
 }
 
@@ -209,14 +233,19 @@ func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string)
 // and audit records. It agrees with the active backend so every visible surface
 // reports which engine actually ran.
 func (v *Validator) sourceTool() string {
+	var base string
 	switch v.backend {
 	case BackendSherlock:
-		return SourceToolSherlock
+		base = SourceToolSherlock
 	case BackendBoth:
-		return SourceTool + " + " + SourceToolSherlock + " consensus"
+		base = SourceTool + " + " + SourceToolSherlock + " consensus"
 	default:
-		return SourceTool
+		base = SourceTool
 	}
+	if v.spiderfootEnabled {
+		return base + " + " + SourceToolSpiderFoot
+	}
+	return base
 }
 
 // rateLimitNote is the compliance-relevant note embedded in every result,
@@ -225,6 +254,9 @@ func (v *Validator) rateLimitNote() string {
 	scopeNote := "curated " + strconv.Itoa(len(v.platforms)) + "-platform allow-list"
 	if v.backend == BackendBoth {
 		scopeNote = "Maigret " + scopeNote + " + Sherlock " + strconv.Itoa(len(sherlockCuratedPlatforms)) + "-platform allow-list"
+	}
+	if v.spiderfootEnabled {
+		scopeNote += " + SpiderFoot " + strconv.Itoa(len(v.spiderfootPlatforms)) + "-platform allow-list"
 	}
 	return "per-lead rate-limited spot check (min " + v.limiter.interval().String() +
 		" between leads, exponential backoff on consecutive errors); scope hard-capped to a " + scopeNote +
@@ -245,11 +277,19 @@ func (v *Validator) confidence(handleCount, claimed int) float64 {
 	if handleCount == 0 {
 		return 0
 	}
-	max := handleCount * len(v.platforms)
+	denom := len(v.platforms)
+	if v.spiderfootEnabled {
+		denom += len(v.spiderfootPlatforms)
+	}
+	max := handleCount * denom
 	if max == 0 {
 		return 0
 	}
-	return math.Round(float64(claimed)/float64(max)*1000) / 1000
+	ratio := float64(claimed) / float64(max)
+	if ratio > 1.0 {
+		ratio = 1.0
+	}
+	return math.Round(ratio*1000) / 1000
 }
 
 // metadata returns runtime/config facts for reviewers: scope, rate-limit base,
@@ -265,6 +305,10 @@ func (v *Validator) metadata() map[string]any {
 	}
 	if v.backend == BackendBoth {
 		m["sherlock_platform_count"] = len(sherlockCuratedPlatforms)
+	}
+	if v.spiderfootEnabled {
+		m["source_tool_spiderfoot"] = SourceToolSpiderFoot
+		m["spiderfoot_platform_count"] = len(v.spiderfootPlatforms)
 	}
 	return m
 }
@@ -349,6 +393,8 @@ func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, [
 // checkHandle runs one backend spot check for a single handle over the curated
 // platform allow-list, wrapped with a per-handle timeout and a panic-recover so a
 // single handle failure degrades to "unknown" instead of taking down the call.
+// When SpiderFoot enrichment is enabled, it also invokes the SpiderFoot runner
+// and merges the results into the same per-handle block.
 func (v *Validator) checkHandle(c handleCandidate, now time.Time) (hr HandleResult) {
 	hr = HandleResult{
 		Handle:     c.handle,
@@ -368,32 +414,110 @@ func (v *Validator) checkHandle(c handleCandidate, now time.Time) (hr HandleResu
 	ctx, cancel := context.WithTimeout(context.Background(), v.timeout)
 	defer cancel()
 
+	ok := false
+	var errs []string
+
+	// Primary backend (Maigret / Sherlock / both).
 	out, err := v.runner.run(ctx, c.handle, v.platforms, v.timeout)
 	if err != nil {
-		hr.Error = err.Error()
+		errs = append(errs, err.Error())
 		v.limiter.backoff()
-		return hr
-	}
-	if out.Error != "" {
-		hr.Error = v.backend + " wrapper: " + out.Error
-		// Fall through: partial results (if any) are still surfaced below.
-	}
-	for _, r := range out.Results {
-		sig := PlatformSignal{
-			Platform:   r.Platform,
-			Status:     r.Status,
-			URL:        r.URL,
-			HTTPStatus: r.HTTPStatus,
+	} else {
+		if out.Error != "" {
+			errs = append(errs, v.backend+" wrapper: "+out.Error)
+		} else {
+			ok = true
 		}
-		hr.Platforms = append(hr.Platforms, sig)
-		if r.Status == "claimed" {
-			hr.ClaimedCount++
+		for _, r := range out.Results {
+			hr.Platforms = append(hr.Platforms, PlatformSignal{
+				Platform:   r.Platform,
+				Status:     r.Status,
+				URL:        r.URL,
+				HTTPStatus: r.HTTPStatus,
+			})
 		}
 	}
-	if out.Error == "" {
+
+	// Optional SpiderFoot enrichment on the same handle.
+	if v.spiderfootEnabled {
+		sfOut, sfErr := v.spiderfootRunner.run(ctx, c.handle, v.spiderfootPlatforms, v.timeout)
+		if sfErr != nil {
+			errs = append(errs, sfErr.Error())
+			v.limiter.backoff()
+		} else {
+			if sfOut.Error != "" {
+				errs = append(errs, "spiderfoot wrapper: "+sfOut.Error)
+			} else {
+				ok = true
+			}
+			sfSignals := make([]PlatformSignal, len(sfOut.Results))
+			for i, r := range sfOut.Results {
+				sfSignals[i] = PlatformSignal{
+					Platform:   r.Platform,
+					Status:     r.Status,
+					URL:        r.URL,
+					HTTPStatus: r.HTTPStatus,
+				}
+			}
+			hr.Platforms = mergePlatforms(hr.Platforms, sfSignals)
+		}
+	}
+
+	hr.ClaimedCount = countClaimed(hr.Platforms)
+	if ok {
 		hr.Status = statusOK
+	} else if len(errs) > 0 {
+		hr.Error = strings.Join(errs, "; ")
 	}
 	return hr
+}
+
+// mergePlatforms merges two platform-signal slices. If both sources report the
+// same platform, the more definitive status wins: claimed > available > unknown.
+// Platforms present in only one source are appended. The order is primary
+// first, then secondary-only platforms.
+func mergePlatforms(primary, secondary []PlatformSignal) []PlatformSignal {
+	rank := map[string]int{"unknown": 0, "available": 1, "claimed": 2}
+	byName := make(map[string]PlatformSignal, len(primary)+len(secondary))
+	for _, s := range primary {
+		byName[s.Platform] = s
+	}
+	for _, s := range secondary {
+		if existing, ok := byName[s.Platform]; ok {
+			if rank[s.Status] > rank[existing.Status] {
+				byName[s.Platform] = s
+			}
+		} else {
+			byName[s.Platform] = s
+		}
+	}
+
+	out := make([]PlatformSignal, 0, len(byName))
+	seen := make(map[string]bool, len(byName))
+	for _, s := range primary {
+		if !seen[s.Platform] {
+			out = append(out, byName[s.Platform])
+			seen[s.Platform] = true
+		}
+	}
+	for _, s := range secondary {
+		if !seen[s.Platform] {
+			out = append(out, byName[s.Platform])
+			seen[s.Platform] = true
+		}
+	}
+	return out
+}
+
+// countClaimed returns the number of "claimed" signals in a platform list.
+func countClaimed(platforms []PlatformSignal) int {
+	n := 0
+	for _, p := range platforms {
+		if p.Status == "claimed" {
+			n++
+		}
+	}
+	return n
 }
 
 func toString(v interface{}) string {

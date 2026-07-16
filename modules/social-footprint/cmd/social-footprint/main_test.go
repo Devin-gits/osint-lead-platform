@@ -105,6 +105,83 @@ print(json.dumps({
 	}
 }
 
+// TestRun_SpiderFootEnrichment exercises the optional SpiderFoot source using
+// the same fake-wrapper technique. It enables SpiderFoot, provides fake wrappers
+// for both backends, and verifies the merged output and metadata.
+func TestRun_SpiderFootEnrichment(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	dir := t.TempDir()
+
+	fakeMaigret := filepath.Join(dir, "fake_maigret.py")
+	maigretScript := `import sys, json
+args = sys.argv[1:]
+u = args[args.index("--username") + 1]
+print(json.dumps({
+    "tool": "maigret", "version": "fake", "username": u,
+    "sites_requested": ["GitHub"],
+    "results": [{"platform": "GitHub", "status": "claimed",
+                 "url": "https://github.com/" + u, "http_status": 200}],
+    "checked_at": "2026-07-13T00:00:00Z", "error": "",
+}))
+`
+	if err := os.WriteFile(fakeMaigret, []byte(maigretScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeSpider := filepath.Join(dir, "fake_spiderfoot.py")
+	spiderScript := `import sys, json
+args = sys.argv[1:]
+u = args[args.index("--username") + 1]
+print(json.dumps({
+    "tool": "spiderfoot", "version": "4.0", "username": u,
+    "sites_requested": ["Keybase"],
+    "results": [{"platform": "Keybase", "status": "claimed",
+                 "url": "https://keybase.io/" + u, "http_status": 200}],
+    "checked_at": "2026-07-13T00:00:00Z", "error": "",
+}))
+`
+	if err := os.WriteFile(fakeSpider, []byte(spiderScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SOCIAL_FOOTPRINT_WRAPPER", fakeMaigret)
+	t.Setenv("SOCIAL_FOOTPRINT_SPIDERFOOT_ENABLED", "true")
+	t.Setenv("SOCIAL_FOOTPRINT_SPIDERFOOT_WRAPPER", fakeSpider)
+	t.Setenv("SOCIAL_FOOTPRINT_MIN_INTERVAL", "0")
+	t.Setenv("SOCIAL_FOOTPRINT_TIMEOUT", "20s")
+
+	// Use an undotted email so only one handle is derived, making the fake-wrapper
+	// math deterministic: Maigret claims GitHub + SpiderFoot claims Keybase = 2.
+	in := strings.NewReader(`{"email":"janesmith@acme.com","company":"Acme"}`)
+	var out, errb bytes.Buffer
+	if err := run(in, &out, &errb); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+
+	var lead map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &lead); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, out.String())
+	}
+	sf := lead[resultKey].(map[string]interface{})
+	if sf["status"] != "ok" {
+		t.Fatalf("status = %v, want ok\n%s", sf["status"], out.String())
+	}
+	if sf["active_signals"].(float64) != 2 {
+		t.Errorf("active_signals = %v, want 2", sf["active_signals"])
+	}
+
+	meta := sf["metadata"].(map[string]interface{})
+	if _, ok := meta["spiderfoot_platform_count"]; !ok {
+		t.Errorf("metadata missing spiderfoot_platform_count: %+v", meta)
+	}
+	src, _ := meta["source_tool_spiderfoot"].(string)
+	if src == "" {
+		t.Errorf("metadata missing source_tool_spiderfoot: %+v", meta)
+	}
+}
+
 func TestRun_BadJSON(t *testing.T) {
 	in := strings.NewReader(`{not json`)
 	var out, errb bytes.Buffer

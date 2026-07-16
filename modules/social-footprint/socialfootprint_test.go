@@ -3,7 +3,9 @@ package socialfootprint
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +48,21 @@ func newTestValidatorWithBackend(r maigretRunner, backend string, platforms []st
 		runner:    r,
 		backend:   backend,
 		platforms: platforms,
+	}
+}
+
+// newTestValidatorWithSpiderFoot builds a Validator for offline tests that
+// exercise the optional SpiderFoot enrichment path.
+func newTestValidatorWithSpiderFoot(r, sfr maigretRunner, backend string, platforms, sfPlatforms []string) *Validator {
+	return &Validator{
+		timeout:             time.Second,
+		limiter:             newRateLimiter(0),
+		runner:              r,
+		backend:             backend,
+		platforms:           platforms,
+		spiderfootEnabled:   true,
+		spiderfootRunner:    sfr,
+		spiderfootPlatforms: sfPlatforms,
 	}
 }
 
@@ -322,6 +339,98 @@ func TestCheck_PlatformCountAndConfidencePerBackend(t *testing.T) {
 				t.Errorf("confidence = %f, want %f (1/(%d handles × %d platforms))", res.Confidence, wantConfidence, handleCount, tt.wantPlatformCnt)
 			}
 		})
+	}
+}
+
+// TestCheck_SpiderFootDisabledByDefault verifies that a Validator constructed
+// without SOCIAL_FOOTPRINT_SPIDERFOOT_ENABLED set does not have a SpiderFoot
+// runner and reports the source tool of the primary backend only.
+func TestCheck_SpiderFootDisabledByDefault(t *testing.T) {
+	v := NewValidatorWithBackend(time.Second, 0, BackendMaigret)
+	if v.spiderfootEnabled {
+		t.Errorf("spiderfootEnabled = true, want false by default")
+	}
+	if v.spiderfootRunner != nil {
+		t.Errorf("spiderfootRunner should be nil when disabled")
+	}
+}
+
+// TestCheck_SpiderFootMergesSignals verifies that SpiderFoot results are
+// merged with the primary backend: overlapping platforms keep the most
+// definitive status, new platforms are appended, and the confidence denominator
+// includes the SpiderFoot platform count.
+func TestCheck_SpiderFootMergesSignals(t *testing.T) {
+	primary := &fakeRunner{byHandle: map[string]wrapperOutput{
+		"bob": {Results: []platformResult{
+			{Platform: "GitHub", Status: "claimed", URL: "https://github.com/bob", HTTPStatus: 200},
+		}},
+	}}
+	spider := &fakeRunner{byHandle: map[string]wrapperOutput{
+		"bob": {Results: []platformResult{
+			{Platform: "GitHub", Status: "available"},
+			{Platform: "Keybase", Status: "claimed", URL: "https://keybase.io/bob", HTTPStatus: 200},
+		}},
+	}}
+	v := newTestValidatorWithSpiderFoot(primary, spider, BackendMaigret, curatedPlatforms, spiderfootCuratedPlatforms)
+
+	res, _ := v.Check(map[string]interface{}{"email": "bob@acme.com"})
+
+	if res.Status != statusOK {
+		t.Fatalf("status = %q, want ok", res.Status)
+	}
+	if len(res.Handles) == 0 {
+		t.Fatal("expected at least one handle result")
+	}
+
+	byPlatform := map[string]PlatformSignal{}
+	for _, p := range res.Handles[0].Platforms {
+		byPlatform[p.Platform] = p
+	}
+	if byPlatform["GitHub"].Status != "claimed" {
+		t.Errorf("GitHub should stay claimed (not downgraded to available); got %q", byPlatform["GitHub"].Status)
+	}
+	if byPlatform["Keybase"].Status != "claimed" {
+		t.Errorf("Keybase should be claimed from SpiderFoot; got %q", byPlatform["Keybase"].Status)
+	}
+	if res.ActiveSignals != 2 {
+		t.Errorf("active_signals = %d, want 2", res.ActiveSignals)
+	}
+
+	denom := len(curatedPlatforms) + len(spiderfootCuratedPlatforms)
+	wantConfidence := math.Round(2.0/float64(denom)*1000) / 1000
+	if res.Confidence != wantConfidence {
+		t.Errorf("confidence = %f, want %f (2/(%d+%d))", res.Confidence, wantConfidence, len(curatedPlatforms), len(spiderfootCuratedPlatforms))
+	}
+	if got := res.Metadata["spiderfoot_platform_count"]; got != len(spiderfootCuratedPlatforms) {
+		t.Errorf("spiderfoot_platform_count = %v, want %d", got, len(spiderfootCuratedPlatforms))
+	}
+	if got := res.Metadata["source_tool_spiderfoot"]; got != SourceToolSpiderFoot {
+		t.Errorf("source_tool_spiderfoot = %v, want %q", got, SourceToolSpiderFoot)
+	}
+	if !strings.Contains(res.SourceTool, SourceToolSpiderFoot) {
+		t.Errorf("SocialFootprintResult.SourceTool = %q, should contain SpiderFoot", res.SourceTool)
+	}
+}
+
+// TestCheck_SpiderFootDoesNotCrashOnRunnerError verifies that a SpiderFoot
+// runner failure degrades that source only: the primary backend still produces
+// an "ok" result and the pipeline stays alive.
+func TestCheck_SpiderFootDoesNotCrashOnRunnerError(t *testing.T) {
+	primary := &fakeRunner{byHandle: map[string]wrapperOutput{
+		"bob": {Results: []platformResult{
+			{Platform: "GitHub", Status: "claimed", URL: "https://github.com/bob", HTTPStatus: 200},
+		}},
+	}}
+	spider := &fakeRunner{err: fmt.Errorf("spiderfoot wrapper not installed")}
+	v := newTestValidatorWithSpiderFoot(primary, spider, BackendMaigret, curatedPlatforms, spiderfootCuratedPlatforms)
+
+	res, _ := v.Check(map[string]interface{}{"email": "bob@acme.com"})
+
+	if res.Status != statusOK {
+		t.Fatalf("status = %q, want ok (primary succeeded)", res.Status)
+	}
+	if res.ActiveSignals != 1 {
+		t.Errorf("active_signals = %d, want 1", res.ActiveSignals)
 	}
 }
 

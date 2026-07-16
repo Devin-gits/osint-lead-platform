@@ -82,12 +82,12 @@ runs, but every backend is subject to the same guardrails:
 
 | Guardrail | Where enforced | What it does |
 |---|---|---|
-| **Curated scope** | `curatedPlatforms` in [`maigret.go`](maigret.go) and `sherlockCuratedPlatforms` in [`sherlock.go`](sherlock.go); re-capped in each wrapper | Maigret uses a fixed list of **15 major platforms**; Sherlock uses a fixed list of **14**. Each list is a compile-time constant passed explicitly on every call and **cannot be widened at runtime**. Each wrapper additionally hard-caps at `ABSOLUTE_MAX_SITES = 30`. |
+| **Curated scope** | `curatedPlatforms` in [`maigret.go`](maigret.go), `sherlockCuratedPlatforms` in [`sherlock.go`](sherlock.go), and `spiderfootCuratedPlatforms` in [`spiderfoot.go`](spiderfoot.go); re-capped in each wrapper | Maigret uses a fixed list of **15 major platforms**; Sherlock uses a fixed list of **14**; SpiderFoot uses a fixed list of **15** seeded to `sfp_accounts`. Each list is a compile-time constant passed explicitly on every call and **cannot be widened at runtime**. Each wrapper additionally hard-caps at `ABSOLUTE_MAX_SITES = 30`. |
 | **Handle cap** | `MaxHandles = 3` in [`socialfootprint.go`](socialfootprint.go) | At most 3 derived candidates checked per lead, bounding fan-out. |
 | **Per-lead rate limit** | `rateLimiter` in [`ratelimit.go`](ratelimit.go) | An in-process limiter enforces a **minimum delay (default 5s) between consecutive per-lead checks** when a caller loops over leads reusing one `Validator`. It also **backs off exponentially** on consecutive runner errors (capped at 5× the configured minimum or 60s, whichever is smaller) to avoid hammering platforms or the wrapper, and resets on a successful lead. This makes "per-lead spot check, never a bulk sweep" a runtime guarantee, not a comment. |
-| **No recursion** | each wrapper calls its tool's low-level search entrypoint (`maigret()` or `sherlock()`) once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
+| **No recursion** | each wrapper calls its tool's low-level search entrypoint (`maigret()`, `sherlock()`, or `sfp_accounts`) once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
 | **No block-evasion** | wrapper passes `proxy=None, tor_proxy=None, i2p_proxy=None, cloudflare_bypass=None` | No residential-proxy / Tor / Cloudflare-bypass ToS-circumvention. |
-| **Minimal collection** | wrappers disable profile scraping (`is_parsing_enabled=False` for Maigret, `QueryNotifyPrint` with no browse for Sherlock); only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
+| **Minimal collection** | wrappers disable profile scraping (`is_parsing_enabled=False` for Maigret, `QueryNotifyPrint` with no browse for Sherlock, `ACCOUNT_EXTERNAL_OWNED` event parsing for SpiderFoot); only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
 | **Documented legal basis** | `LegalBasis` logged on every audit line | `GDPR Art.6(1)(f) legitimate-interest` per `docs/compliance.md` (social footprint = "Medium" risk). |
 
 **Why 15 platforms.** The curated set —
@@ -95,7 +95,7 @@ GitHub, GitLab, Reddit, Twitter, Instagram, Pinterest, Medium, Telegram, Keybase
 HackerNews, Steam, SoundCloud, Vimeo, About.me, Patreon — is chosen because a
 claimed/unclaimed signal on these is a meaningful "real, active person" indicator
 and the scale (15 requests per handle) is defensible for a per-lead spot check.
-Widening scope requires editing the constant **and** re-review.
+Widening scope requires editing the constant **and** re-review. The same 15-platform list is used by the optional SpiderFoot enrichment path.
 
 ## I/O contract
 
@@ -112,10 +112,10 @@ Widening scope requires editing the constant **and** re-review.
   | `handles_checked` | []string | the handle strings actually checked (≤ `MaxHandles`) |
   | `handles` | []object | per-handle result blocks (see below) |
   | `active_signals` | int | total `"claimed"` hits across all handles — the headline "this identity is real/active" score |
-  | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × active backend's primary platform count`); a conservative, reviewer-visible score (rounded to 3 decimals). In `both` mode the denominator intentionally uses Maigret's 15-platform list to avoid double-counting. |
-  | `metadata` | object | non-PII runtime/config snapshot: `source_tool` (backend-dependent), `legal_basis`, `max_handles`, `platform_count` (primary backend's list; `sherlock_platform_count` included in `both` mode), `rate_limit_base`, `rate_limit_current` |
+  | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × active backend's primary platform count + SpiderFoot platform count when enabled`); a conservative, reviewer-visible score (rounded to 3 decimals). In `both` mode the denominator intentionally uses Maigret's 15-platform list to avoid double-counting; the SpiderFoot count is then added when enabled. |
+  | `metadata` | object | non-PII runtime/config snapshot: `source_tool` (backend-dependent), `legal_basis`, `max_handles`, `platform_count` (primary backend's list; `sherlock_platform_count` included in `both` mode; `spiderfoot_platform_count` and `source_tool_spiderfoot` when SpiderFoot is enabled), `rate_limit_base`, `rate_limit_current` |
   | `checked_at` | string | RFC3339 UTC timestamp |
-  | `source_tool` | string | backend-dependent: Maigret string for `maigret`, Sherlock string for `sherlock`, combined consensus string for `both` |
+  | `source_tool` | string | backend-dependent: Maigret string for `maigret`, Sherlock string for `sherlock`, combined consensus string for `both`; with SpiderFoot enabled the string also includes SpiderFoot |
   | `rate_limit_note` | string | the compliance-relevant scope/rate-limit note |
 
   Each `handles[]` block: `handle`, `origin`
