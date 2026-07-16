@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS leads (
     source_id text,
     permission_ref text,
     stage text NOT NULL DEFAULT 'raw',
-    risk_level text NOT NULL DEFAULT 'n/a',
+    risk_level text NOT NULL DEFAULT 'unknown',
     risk_score numeric,
     results jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     status text NOT NULL,
     legal_basis text NOT NULL,
     subject jsonb NOT NULL DEFAULT '{}'::jsonb,
-    raw_json jsonb,
+    raw_stderr_json text,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 

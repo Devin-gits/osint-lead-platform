@@ -78,19 +78,27 @@ All endpoints return JSON envelopes:
 # 1. Create a lead
 LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
-  -d '{"email":"support@github.com","company":"GitHub"}' | jq -r '.data.id')
+  -d '{"email":"support@github.com","company":"GitHub","permission_ref":"p-001"}' | jq -r '.data.id')
 
 # 2. Run email-validate
 curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
   -H 'Content-Type: application/json' \
-  -d '{"modules":["email-validate"]}' | jq '.data.results.email_validate'
+  -d '{"modules":["email-validate"]}' | jq '.data.email_validate'
 
-# 3. Get the lead with audit events
+# 3. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
 ```
 
 With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
 `"ok"` and `has_mx_records`/`syntax_valid` are true for real domains.
+
+### Response shape notes
+
+- Lead records expose module results as top-level keys (`email_validate`,
+  `phone_validate`, `domain_intel`, `social_footprint`). The internal `results`
+  map is not part of the public JSON.
+- `risk_level` is one of `low`, `medium`, `high`, or `unknown`.
+- Audit events use `raw_stderr_json` and include `legal_basis` on every line.
 
 ## Notes
 
