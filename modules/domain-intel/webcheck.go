@@ -5,40 +5,53 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/likexian/whois"
 )
 
 // WebCheckTool identifies this sub-tool and its provenance. This module does not
 // fork or run lissy93/web-check's full Node app (see README §"web-check
 // integration"); it reimplements the specific domain-infra checks web-check
-// exposes at /api/dns, /api/ssl and /api/whois — the "is this an established,
+// exposes at /api/dns, /api/ssl, HTTP and /api/whois — the "is this an established,
 // real business domain?" signals — using the Go standard library. The version
 // string names the upstream project the checks are modeled on.
-const WebCheckTool = "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/ssl/whois checks)"
+const WebCheckTool = "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/tls/http/whois checks)"
 
 // DNSResult mirrors the record-type shape of web-check's api/dns.js JSON output
-// (A/AAAA/MX/NS/TXT), restricted to the record types this module consumes.
+// (A/AAAA/CNAME/MX/NS/TXT), restricted to the record types this module consumes.
 type DNSResult struct {
-	A    []string `json:"a"`
-	AAAA []string `json:"aaaa"`
-	MX   []string `json:"mx"`
-	NS   []string `json:"ns"`
-	TXT  []string `json:"txt"`
+	A     []string `json:"a"`
+	AAAA  []string `json:"aaaa"`
+	CNAME []string `json:"cname"`
+	MX    []string `json:"mx"`
+	NS    []string `json:"ns"`
+	TXT   []string `json:"txt"`
 }
 
 // SSLResult captures the leaf-certificate facts web-check's api/ssl surfaces:
 // whether a valid chain was presented, who issued it, and its validity window —
 // the signal for "this domain terminates real, currently-valid TLS".
 type SSLResult struct {
-	Valid           bool   `json:"valid"`
-	Issuer          string `json:"issuer,omitempty"`
-	Subject         string `json:"subject,omitempty"`
-	NotBefore       string `json:"not_before,omitempty"`
-	NotAfter        string `json:"not_after,omitempty"`
-	DaysUntilExpiry int    `json:"days_until_expiry"`
-	Error           string `json:"error,omitempty"`
+	Valid           bool     `json:"valid"`
+	Issuer          string   `json:"issuer,omitempty"`
+	Subject         string   `json:"subject,omitempty"`
+	NotBefore       string   `json:"not_before,omitempty"`
+	NotAfter        string   `json:"not_after,omitempty"`
+	DaysUntilExpiry int      `json:"days_until_expiry"`
+	Protocol        string   `json:"protocol,omitempty"`
+	SANs            []string `json:"sans,omitempty"`
+	Error           string   `json:"error,omitempty"`
+}
+
+type HTTPResult struct {
+	StatusCode int               `json:"status_code"`
+	Server     string            `json:"server,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }
 
 // WhoisResult carries the domain-age signal web-check's api/whois surfaces:
@@ -53,20 +66,21 @@ type WhoisResult struct {
 
 // WebCheckResult is the "web_check" sub-result of the domain_intel key. It
 // answers the establishment/legitimacy question; Status is "unknown" if the
-// whole sub-tool failed, but individual checks (dns/ssl/whois) degrade
+// whole sub-tool failed, but individual checks (dns/tls/http/whois) degrade
 // independently and carry their own error notes.
 type WebCheckResult struct {
 	Status     string       `json:"status"` // "ok" if at least DNS resolved; else "unknown"
 	Resolvable bool         `json:"resolvable"`
 	DNS        *DNSResult   `json:"dns,omitempty"`
 	SSL        *SSLResult   `json:"ssl,omitempty"`
+	HTTP       *HTTPResult  `json:"http,omitempty"`
 	Whois      *WhoisResult `json:"whois,omitempty"`
 	CheckedAt  string       `json:"checked_at"`
 	SourceTool string       `json:"source_tool"`
 	Error      string       `json:"error,omitempty"`
 }
 
-// runWebCheck performs the DNS, SSL and WHOIS checks against domain, each
+// runWebCheck performs the DNS, TLS, HTTP and WHOIS checks against domain, each
 // bounded by the shared timeout and each degrading independently so one failing
 // check never blocks the others. It never panics: a total failure returns a
 // Status "unknown" result rather than an error.
@@ -95,6 +109,9 @@ func runWebCheck(ctx context.Context, domain string, timeout time.Duration) WebC
 
 	ssl := inspectSSL(domain, timeout)
 	res.SSL = &ssl
+
+	httpResult := inspectHTTP(ctx, domain, timeout)
+	res.HTTP = &httpResult
 
 	whois := lookupWhois(domain, timeout)
 	res.Whois = &whois
@@ -133,7 +150,7 @@ func lookupDNS(ctx context.Context, domain string, timeout time.Duration) DNSRes
 	defer cancel()
 
 	var r net.Resolver
-	out := DNSResult{A: []string{}, AAAA: []string{}, MX: []string{}, NS: []string{}, TXT: []string{}}
+	out := DNSResult{A: []string{}, AAAA: []string{}, CNAME: []string{}, MX: []string{}, NS: []string{}, TXT: []string{}}
 
 	if ips, err := r.LookupIP(c, "ip4", domain); err == nil {
 		for _, ip := range ips {
@@ -143,6 +160,12 @@ func lookupDNS(ctx context.Context, domain string, timeout time.Duration) DNSRes
 	if ips, err := r.LookupIP(c, "ip6", domain); err == nil {
 		for _, ip := range ips {
 			out.AAAA = append(out.AAAA, ip.String())
+		}
+	}
+	if cname, err := r.LookupCNAME(c, domain); err == nil {
+		cname = strings.TrimSuffix(cname, ".")
+		if cname != "" && cname != strings.TrimSuffix(domain, ".") {
+			out.CNAME = append(out.CNAME, cname)
 		}
 	}
 	if mxs, err := r.LookupMX(c, domain); err == nil {
@@ -180,6 +203,7 @@ func inspectSSL(domain string, timeout time.Duration) SSLResult {
 		out.Error = "no peer certificate presented"
 		return out
 	}
+	state := conn.ConnectionState()
 	leaf := certs[0]
 	out.Valid = true
 	out.Issuer = leaf.Issuer.String()
@@ -187,53 +211,81 @@ func inspectSSL(domain string, timeout time.Duration) SSLResult {
 	out.NotBefore = leaf.NotBefore.UTC().Format(time.RFC3339)
 	out.NotAfter = leaf.NotAfter.UTC().Format(time.RFC3339)
 	out.DaysUntilExpiry = int(time.Until(leaf.NotAfter).Hours() / 24)
+	out.Protocol = tlsVersionName(state.Version)
+	out.SANs = append([]string(nil), leaf.DNSNames...)
 	return out
 }
 
+func tlsVersionName(version uint16) string {
+	switch version {
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	default:
+		return "unknown"
+	}
+}
+
+func inspectHTTP(ctx context.Context, domain string, timeout time.Duration) HTTPResult {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	client := &http.Client{}
+	var lastErr error
+
+	for _, scheme := range []string{"https", "http"} {
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, scheme+"://"+domain, nil)
+		if err != nil {
+			return HTTPResult{Error: fmt.Sprintf("http request creation failed: %v", err)}
+		}
+		req.Header.Set("User-Agent", "domain-intel/1.0")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		resp.Body.Close()
+
+		headers := make(map[string]string)
+		for _, key := range []string{"Content-Type", "X-Powered-By"} {
+			if value := resp.Header.Get(key); value != "" {
+				headers[key] = value
+			}
+		}
+		return HTTPResult{
+			StatusCode: resp.StatusCode,
+			Server:     resp.Header.Get("Server"),
+			Headers:    headers,
+		}
+	}
+
+	return HTTPResult{Error: fmt.Sprintf("http request failed: %v", lastErr)}
+}
+
 var (
-	reWhoisRefer     = regexp.MustCompile(`(?i)^\s*(?:refer|whois):\s*(\S+)`)
 	reWhoisCreated   = regexp.MustCompile(`(?i)^\s*(?:Creation Date|Created On|Created Date|created|Registered on|Domain Registration Date|Registration Time):\s*(.+?)\s*$`)
 	reWhoisRegistrar = regexp.MustCompile(`(?i)^\s*Registrar:\s*(.+?)\s*$`)
 )
 
-// lookupWhois performs a two-step WHOIS query over TCP/43 using only the
-// standard library: it asks whois.iana.org which server is authoritative for
-// the domain's TLD, then queries that server for the domain and parses the
-// creation date and registrar. This is the same referral chain a `whois`
-// client follows; we implement it directly because Go has no stdlib WHOIS and
-// the sandbox has no `whois` binary. Any failure degrades to an Error note.
+// lookupWhois queries the domain through the Apache-2.0 likexian/whois client,
+// which follows registry referrals and supports bounded network timeouts. Local
+// parsing keeps the module's stable registrar/domain-age output schema.
 func lookupWhois(domain string, timeout time.Duration) WhoisResult {
 	out := WhoisResult{}
-
-	tld := domain
-	if i := strings.LastIndex(domain, "."); i >= 0 {
-		tld = domain[i+1:]
-	}
-
-	ianaResp, err := whoisQuery("whois.iana.org", tld, timeout)
+	client := whois.NewClient().SetTimeout(timeout)
+	response, err := client.Whois(domain)
 	if err != nil {
-		out.Error = fmt.Sprintf("iana referral lookup failed: %v", err)
-		return out
-	}
-	server := ""
-	for _, line := range strings.Split(ianaResp, "\n") {
-		if m := reWhoisRefer.FindStringSubmatch(line); m != nil {
-			server = strings.TrimSpace(m[1])
-			break
-		}
-	}
-	if server == "" {
-		out.Error = fmt.Sprintf("no referral whois server for TLD %q", tld)
+		out.Error = fmt.Sprintf("whois query failed: %v", err)
 		return out
 	}
 
-	resp, err := whoisQuery(server, domain, timeout)
-	if err != nil {
-		out.Error = fmt.Sprintf("whois query to %s failed: %v", server, err)
-		return out
-	}
-
-	for _, line := range strings.Split(resp, "\n") {
+	for _, line := range strings.Split(response, "\n") {
 		if out.CreatedDate == "" {
 			if m := reWhoisCreated.FindStringSubmatch(line); m != nil {
 				out.CreatedDate = strings.TrimSpace(m[1])
@@ -255,34 +307,6 @@ func lookupWhois(domain string, timeout time.Duration) WhoisResult {
 		out.Error = "whois response contained no creation-date or registrar field"
 	}
 	return out
-}
-
-// whoisQuery opens a TCP/43 connection, sends the query terminated by CRLF (the
-// WHOIS protocol, RFC 3912), and returns the full response, bounded by timeout.
-func whoisQuery(server, query string, timeout time.Duration) (string, error) {
-	d := &net.Dialer{Timeout: timeout}
-	conn, err := d.Dial("tcp", net.JoinHostPort(server, "43"))
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if _, err := conn.Write([]byte(query + "\r\n")); err != nil {
-		return "", err
-	}
-	var sb strings.Builder
-	buf := make([]byte, 4096)
-	for {
-		n, err := conn.Read(buf)
-		if n > 0 {
-			sb.Write(buf[:n])
-		}
-		if err != nil {
-			break
-		}
-	}
-	return sb.String(), nil
 }
 
 // whoisDateLayouts are the creation-date formats seen across common registries.

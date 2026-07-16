@@ -27,9 +27,10 @@ The module's own wrapper code is **Go**, matching the sibling
 [`email-validate`](../email-validate) module (same repo module path convention,
 same stdin/stdout CLI shape) so the pipeline is built from one consistent
 binary-per-module toolchain. Go also fits this module's two integration jobs
-cleanly with **zero third-party dependencies**: `os/exec` drives the
-theHarvester subprocess, and `net` / `crypto/tls` cover the DNS, SSL and WHOIS
-(raw TCP/43) checks that stand in for web-check. theHarvester itself is Python,
+cleanly with one permissive Go dependency: `os/exec` drives the theHarvester
+subprocess, `net` / `net/http` / `crypto/tls` cover DNS, HTTP and TLS, and the
+Apache-2.0 `github.com/likexian/whois` client handles WHOIS referrals.
+theHarvester itself is Python,
 but that is irrelevant to the wrapper language — it is invoked as an external
 process, never imported (see below).
 
@@ -46,15 +47,15 @@ aggregation*, which imposes no copyleft obligation. Concretely, `harvester.go`
 shells out to:
 
 ```
-theHarvester -d <domain> -b hackertarget,crtsh,rapiddns,certspotter -f <tmp>/out
+theHarvester -d <domain> -b hackertarget,crtsh,rapiddns,certspotter -l 200 -f <tmp>/out
 ```
 
 and parses the `<tmp>/out.json` file theHarvester writes. The parsing is based
 on theHarvester v4.11.1's **actual** `-f` JSON output — top-level keys `cmd`,
 `hosts` (each a `"<subdomain>:<ip>"` string), `ips`, `emails`, `shodan`, plus
 optional keys — verified against the installed source (`theHarvester/__main__.py`
-JSON report section) and a real run (see [Testing](#testing)). Nothing about the
-output shape is mocked.
+JSON report section) and a real run (see [Testing](#testing)). An offline fake
+subprocess covers argv enforcement and parsing without replacing live integration tests.
 
 **Source allowlist (compliance).** The `-b` list is a fixed constant
 (`hackertarget`, `crtsh`, `rapiddns`, `certspotter`) — all **keyless** and
@@ -62,8 +63,9 @@ output shape is mocked.
 `leaklookup`) are **deliberately excluded** per the Stage 1 decision's
 compliance note and [`docs/compliance.md`](../../docs/compliance.md) hard-rule
 #3; paid/keyed sources (Hunter, SecurityTrails, Shodan, Censys) are excluded too
-since keyless operation is the documented default. A test
-(`TestAllowlistExcludesBreachDBs`) enforces the exclusion.
+since keyless operation is the documented default. Tests
+(`TestAllowlistExcludesBreachDBs` and `TestHarvesterArgvExcludesBlockedSources`)
+enforce the exclusion in configuration and on the actual subprocess argv.
 
 **If theHarvester isn't installed**, the harvester sub-result degrades to
 `status: "unknown"` with an install hint — it never blocks web-check or crashes
@@ -89,16 +91,22 @@ modules do. So this module **reimplements the specific web-check checks relevant
 to "is this an established, real business domain"** — the exact subset the
 evaluation itself named (DNS, SSL/TLS, WHOIS/domain-age) — directly in Go stdlib:
 
-- **DNS** (`api/dns` equivalent): A / AAAA / MX / NS / TXT via `net.Resolver`.
-- **SSL** (`api/ssl` equivalent): dials `:443`, reads the leaf certificate's
-  issuer/subject/validity window via `crypto/tls`.
+- **DNS** (`api/dns` equivalent): A / AAAA / CNAME / MX / NS / TXT via `net.Resolver`.
+- **SSL/TLS** (`api/ssl` equivalent): dials `:443`, reads the leaf certificate's
+  issuer/subject/validity window/SANs and negotiated protocol via `crypto/tls`.
+- **HTTP**: requests HTTPS first and falls back to HTTP, recording status,
+  `Server`, `Content-Type`, and `X-Powered-By` with a bounded `net/http` client.
 - **WHOIS + domain age** (`api/whois` equivalent): a two-step WHOIS query over
   raw TCP/43 (ask `whois.iana.org` for the TLD's authoritative server, then
   query that server), parsing the creation date and registrar and deriving
   `domain_age_days`.
 
+WHOIS uses `github.com/likexian/whois` **v1.15.6** (Apache-2.0). This version
+declares Go 1.21 and therefore builds without changing the module's exact Go
+1.22.5 pin; v1.15.7 was not selected because it requires Go 1.24 or newer.
+
 The output field shapes mirror web-check's real JSON (e.g. its `api/dns.js`
-returns `A`/`AAAA`/`MX`/`NS`/`TXT`, restated here in lower-case JSON keys). If a
+returns `A`/`AAAA`/`CNAME`/`MX`/`NS`/`TXT`, restated here in lower-case JSON keys). If a
 future need arises for web-check's richer checks (tech-stack, blocklist,
 headers), the fork option remains open behind this same interface; the
 reimplementation is the pragmatic Stage 2 starting point, not a permanent
@@ -116,8 +124,9 @@ rejection of the fork.
     web_check:                    # establishment/legitimacy signals
       status            ok|unknown  ("ok" once DNS resolves)
       resolvable        bool
-      dns               {a[], aaaa[], mx[], ns[], txt[]}
-      ssl               {valid, issuer, subject, not_before, not_after, days_until_expiry, error?}
+      dns               {a[], aaaa[], cname[], mx[], ns[], txt[]}
+      ssl               {valid, issuer, subject, not_before, not_after, days_until_expiry, protocol?, sans[]?, error?}
+      http              {status_code, server?, headers?, error?}
       whois             {registrar, created_date, domain_age_days, error?}
       checked_at        RFC3339 UTC
       source_tool       string
@@ -138,7 +147,7 @@ rejection of the fork.
 
 - **Audit (stderr):** exactly **two** JSON lines per call — **one per tool**,
   always, even on failure — each carrying `tool` (name + version), `checked_at`,
-  `domain`, `status`, and `legal_basis`
+  `domain`, `status`, `legal_basis`, and an optional `error` note
   (`GDPR Art.6(1)(f) legitimate-interest`, per
   [`docs/compliance.md`](../../docs/compliance.md), where domain intel is the
   "Low" personal-data-risk category). This satisfies the architecture "Audit"
@@ -179,6 +188,7 @@ installed (host list trimmed to representative rows — the run returned 147):
       "dns": {
         "a": ["172.66.157.115", "104.20.44.163"],
         "aaaa": ["2606:4700:10::6814:2ca3", "2606:4700:10::ac42:9d73"],
+        "cname": [],
         "mx": ["aspmx.l.google.com", "alt2.aspmx.l.google.com", "alt1.aspmx.l.google.com", "alt4.aspmx.l.google.com", "alt3.aspmx.l.google.com"],
         "ns": ["fay.ns.cloudflare.com", "west.ns.cloudflare.com"],
         "txt": ["v=spf1 include:_spf.google.com include:servers.mcsv.net include:amazonses.com -all", "MS=ms73859685", "..."]
@@ -189,7 +199,14 @@ installed (host list trimmed to representative rows — the run returned 147):
         "subject": "CN=owasp.org",
         "not_before": "2026-07-08T04:07:11Z",
         "not_after": "2026-10-06T05:06:52Z",
-        "days_until_expiry": 84
+        "days_until_expiry": 84,
+        "protocol": "TLS 1.3",
+        "sans": ["owasp.org", "*.owasp.org"]
+      },
+      "http": {
+        "status_code": 200,
+        "server": "cloudflare",
+        "headers": {"Content-Type": "text/html; charset=utf-8"}
       },
       "whois": {
         "registrar": "GoDaddy.com, LLC",
@@ -197,7 +214,7 @@ installed (host list trimmed to representative rows — the run returned 147):
         "domain_age_days": 9060
       },
       "checked_at": "2026-07-13T13:59:51Z",
-      "source_tool": "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/ssl/whois checks)"
+      "source_tool": "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/tls/http/whois checks)"
     },
     "harvester": {
       "status": "ok",
@@ -217,7 +234,7 @@ installed (host list trimmed to representative rows — the run returned 147):
     },
     "checked_at": "2026-07-13T13:59:51Z",
     "source_tools": [
-      "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/ssl/whois checks)",
+      "web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/tls/http/whois checks)",
       "laramies/theHarvester@v4.11.1 (CLI subprocess)"
     ]
   }
@@ -227,7 +244,7 @@ installed (host list trimmed to representative rows — the run returned 147):
 Audit lines on stderr for the same call (one per tool):
 
 ```json
-{"tool":"web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/ssl/whois checks)","checked_at":"2026-07-13T13:59:51Z","domain":"owasp.org","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
+{"tool":"web-check-lite (reimpl. of lissy93/web-check@2.1.10 dns/tls/http/whois checks)","checked_at":"2026-07-13T13:59:51Z","domain":"owasp.org","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
 {"tool":"laramies/theHarvester@v4.11.1 (CLI subprocess)","checked_at":"2026-07-13T13:59:51Z","domain":"owasp.org","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
 ```
 
@@ -273,18 +290,25 @@ go test -short ./...    # skips the live network/subprocess tests
 - `TestAnalyze_MissingDomain` covers graceful degradation for an empty domain
   (both tools `unknown`, audit lines still emitted).
 - `TestHarvesterAbsent` forces the missing-binary path (no network).
-- `TestNormalizeDomain`, `TestSplitHost` (incl. IPv6), and
-  `TestAllowlistExcludesBreachDBs` cover the parsing/compliance invariants.
+- `TestHarvesterArgvExcludesBlockedSources` runs an offline fake executable,
+  verifies `-l`/`-f`, proves breach sources never reach argv, and parses JSON.
+- `TestNormalizeDomain`, `TestSplitHost` (incl. IPv6), `TestInspectHTTP`,
+  `TestResultJSONSchema`, and `TestTLSVersionName` cover pure/offline invariants.
 - The CLI test (`cmd/domain-intel`) covers the full stdin→stdout contract,
   raw-field preservation, and the two-audit-lines-on-stderr behavior.
 
 ## Dependencies
 
-- Go (built and tested with 1.22.5). **No third-party Go modules** — standard
-  library only (`net`, `crypto/tls`, `os/exec`, `encoding/json`).
+- Go (built and tested with 1.22.5), plus `github.com/likexian/whois` v1.15.6
+  (Apache-2.0) for bounded WHOIS/referral queries. Native DNS/TLS/HTTP and CLI
+  integration use `net`, `crypto/tls`, `net/http`, `os/exec`, and `encoding/json`.
 - **theHarvester v4.11.1** — *external, optional at runtime*, invoked as a CLI
   subprocess (never imported). Install separately (source/`uv`/Docker; not the
   PyPI stub). GPL-2.0; kept behind the subprocess boundary so this MIT module
   incurs no copyleft obligation. Absent → harvester sub-result is `unknown`.
 - **No API keys, no accounts, no paid services** — keyless theHarvester sources
-  and keyless DNS/SSL/WHOIS only.
+  and keyless DNS/TLS/HTTP/WHOIS only.
+
+The Stage 1 approval is time-boxed: after deployment, re-assess whether the
+keyless-only theHarvester results add enough enrichment value to keep this
+integration automated; otherwise demote it to an optional/manual module.

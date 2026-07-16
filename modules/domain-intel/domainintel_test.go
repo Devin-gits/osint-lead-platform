@@ -2,8 +2,14 @@ package domainintel
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +97,9 @@ func TestAnalyze_MissingDomain(t *testing.T) {
 		if au.Status != "unknown" {
 			t.Errorf("audit.status = %q, want unknown", au.Status)
 		}
+		if au.Error == "" {
+			t.Errorf("audit.error is empty for failed tool %q", au.Tool)
+		}
 	}
 }
 
@@ -141,14 +150,107 @@ func TestSplitHost(t *testing.T) {
 }
 
 func TestAllowlistExcludesBreachDBs(t *testing.T) {
-	banned := map[string]bool{"haveibeenpwned": true, "dehashed": true, "leaklookup": true}
-	for _, s := range allowedSources {
-		if banned[s] {
-			t.Errorf("allowedSources must not contain breach-database source %q", s)
+	for _, s := range filteredHarvesterSources() {
+		if _, blocked := blockedSources[s]; blocked {
+			t.Errorf("filtered sources must not contain breach-database source %q", s)
 		}
 	}
-	if len(allowedSources) == 0 {
-		t.Error("allowedSources is empty; theHarvester needs at least one -b source")
+	if len(filteredHarvesterSources()) == 0 {
+		t.Error("filtered sources are empty; theHarvester needs at least one -b source")
+	}
+}
+
+func TestHarvesterArgvExcludesBlockedSources(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	fakeBin, err := filepath.Abs(filepath.Join("testdata", "fake-theHarvester"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(HarvesterBinaryEnv, fakeBin)
+	t.Setenv("FAKE_HARVESTER_ARGS_FILE", argsFile)
+
+	originalSources := allowedSources
+	allowedSources = append(append([]string(nil), originalSources...), "dehashed", "leaklookup", "haveibeenpwned")
+	t.Cleanup(func() { allowedSources = originalSources })
+
+	res := runHarvester(context.Background(), "example.com", 5*time.Second)
+	if res.Status != "ok" {
+		t.Fatalf("status = %q, want ok: %s", res.Status, res.Error)
+	}
+	if res.HostCount != 2 || len(res.IPs) != 2 || len(res.Emails) != 1 {
+		t.Fatalf("unexpected parsed result: %+v", res)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := string(data)
+	for source := range blockedSources {
+		if strings.Contains(args, source) {
+			t.Errorf("blocked source %q appeared in argv: %s", source, args)
+		}
+	}
+	if !strings.Contains(args, "-l "+strconv.Itoa(harvesterLimit)) {
+		t.Errorf("argv missing fixed limit: %s", args)
+	}
+	if !strings.Contains(args, "-f ") {
+		t.Errorf("argv missing output basename: %s", args)
+	}
+}
+
+func TestResultJSONSchema(t *testing.T) {
+	result := Result{
+		WebCheck: WebCheckResult{
+			DNS:  &DNSResult{A: []string{"192.0.2.1"}, CNAME: []string{"edge.example.net"}},
+			SSL:  &SSLResult{Valid: true, Protocol: "TLS 1.3", SANs: []string{"example.com"}},
+			HTTP: &HTTPResult{StatusCode: 200, Server: "example", Headers: map[string]string{"Content-Type": "text/html"}},
+		},
+		Harvester: HarvesterResult{Hosts: []Host{}, IPs: []string{}, Emails: []string{}},
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"web_check"`, `"harvester"`, `"cname"`, `"protocol"`, `"sans"`, `"http"`, `"status_code"`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("JSON missing stable key %s: %s", key, data)
+		}
+	}
+}
+
+func TestInspectHTTP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Server", "test-server")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Powered-By", "test")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	domain := strings.TrimPrefix(server.URL, "http://")
+	result := inspectHTTP(context.Background(), domain, 2*time.Second)
+	if result.Error != "" {
+		t.Fatalf("inspectHTTP returned error: %s", result.Error)
+	}
+	if result.StatusCode != http.StatusAccepted || result.Server != "test-server" {
+		t.Errorf("unexpected HTTP result: %+v", result)
+	}
+	if result.Headers["Content-Type"] != "application/json" || result.Headers["X-Powered-By"] != "test" {
+		t.Errorf("unexpected selected headers: %+v", result.Headers)
+	}
+}
+
+func TestTLSVersionName(t *testing.T) {
+	cases := map[uint16]string{
+		0:      "unknown",
+		0x0303: "TLS 1.2",
+		0x0304: "TLS 1.3",
+	}
+	for version, want := range cases {
+		if got := tlsVersionName(version); got != want {
+			t.Errorf("tlsVersionName(%#x) = %q, want %q", version, got, want)
+		}
 	}
 }
 
