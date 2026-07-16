@@ -2,7 +2,9 @@ package runner
 
 import (
 	"context"
+	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
@@ -166,5 +168,149 @@ func TestRunner_RunBatch(t *testing.T) {
 	}
 	if run.Status != "completed" {
 		t.Fatalf("expected run completed, got %s", run.Status)
+	}
+}
+
+func TestRunner_RunSingleSocialFootprintMissingHandle(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 5*time.Second)
+
+	lead := models.Lead{ID: util.NewID(), Name: "No Email No Domain"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"social-footprint"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["social_footprint"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected social_footprint result, got %T", updated.Results["social_footprint"])
+	}
+	if ev["status"] != "skipped" {
+		t.Fatalf("expected skipped status, got %v", ev["status"])
+	}
+	if updated.Stage != models.StageRaw {
+		t.Fatalf("expected stage raw on skip, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "social-footprint" && e.LegalBasis == models.LegalBasisGDPR {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected social-footprint audit event with legal basis, got %+v", events)
+	}
+}
+
+func TestRunner_RunSingleSocialFootprint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping network/subprocess social-footprint test in short mode")
+	}
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 10*time.Second)
+
+	lead := models.Lead{ID: util.NewID(), Email: "jane.smith@acme.com"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"social-footprint"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["social_footprint"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected social_footprint result, got %T", updated.Results["social_footprint"])
+	}
+	status, _ := ev["status"].(string)
+	if status != "ok" && status != "unknown" {
+		t.Fatalf("expected social_footprint ok or unknown, got %v", status)
+	}
+
+	handles, _ := ev["handles_checked"].([]any)
+	if len(handles) == 0 {
+		t.Fatalf("expected handles_checked to be non-empty")
+	}
+
+	if updated.Stage != models.StageValidated {
+		t.Fatalf("expected stage validated when social-footprint reports ok, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "social-footprint" && e.LegalBasis == models.LegalBasisGDPR && e.Subject.Handle != "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected social-footprint audit event with handle subject and legal basis, got %+v", events)
+	}
+}
+
+func TestRunner_RunSingleSocialFootprintUsesDomainIntel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess social-footprint test in short mode")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available; skipping live Maigret subprocess test")
+	}
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 15*time.Second)
+
+	lead := models.Lead{
+		ID:    util.NewID(),
+		Email: "admin@acme.com",
+		Results: map[string]any{
+			"domain_intel": map[string]any{
+				"harvester": map[string]any{
+					"emails": []any{"jane.smith@acme.com"},
+					"hosts":  []any{map[string]any{"host": "jane.smith.acme.com"}},
+				},
+			},
+		},
+	}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"social-footprint"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["social_footprint"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected social_footprint result, got %T", updated.Results["social_footprint"])
+	}
+	handles, _ := ev["handles_checked"].([]any)
+	if len(handles) < 2 {
+		t.Fatalf("expected at least 2 handle candidates from email + domain-intel harvester, got %d", len(handles))
 	}
 }

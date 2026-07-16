@@ -8,41 +8,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	domainintel "github.com/Moyeil-73/osint-lead-platform/modules/domain-intel"
 	emailvalidate "github.com/Moyeil-73/osint-lead-platform/modules/email-validate"
 	phonevalidate "github.com/Moyeil-73/osint-lead-platform/modules/phone-validate"
+	socialfootprint "github.com/Moyeil-73/osint-lead-platform/modules/social-footprint"
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
 
-// socialMinInterval is the minimum time between social-footprint attempts per
-// lead. The real social module has its own limiter; this guards the stub path.
-const socialMinInterval = 5 * time.Second
-
 // Runner executes modules and persists their output.
 type Runner struct {
-	store      store.Store
-	emailVal   *emailvalidate.Validator
-	phoneVal   *phonevalidate.Validator
-	domainVal  *domainintel.Analyzer
-	socialMu   sync.Mutex
-	socialLast map[string]time.Time
+	store     store.Store
+	emailVal  *emailvalidate.Validator
+	phoneVal  *phonevalidate.Validator
+	domainVal *domainintel.Analyzer
+	socialVal *socialfootprint.Validator
 }
 
 // New builds a Runner backed by the supplied Store. A non-positive timeout uses
 // each module's default.
 func New(s store.Store, timeout time.Duration) *Runner {
 	return &Runner{
-		store:      s,
-		emailVal:   emailvalidate.NewValidator(timeout),
-		phoneVal:   phonevalidate.NewValidator(timeout),
-		domainVal:  domainintel.NewAnalyzer(timeout),
-		socialLast: make(map[string]time.Time),
+		store:     s,
+		emailVal:  emailvalidate.NewValidator(timeout),
+		phoneVal:  phonevalidate.NewValidator(timeout),
+		domainVal: domainintel.NewAnalyzer(timeout),
+		socialVal: socialfootprint.NewValidator(timeout, 0),
 	}
 }
 
@@ -280,30 +275,43 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		return models.ModuleResult{Key: "phone_validate", Result: res, AuditEvents: events}, nil
 
 	case models.ModuleSocialFootprint:
-		subject := models.Subject{}
-		reason := "not wired in control-plane v1"
-		if !r.socialAllowed(lead.ID) {
-			reason = "rate limited"
+		leadMap := map[string]interface{}{
+			"email": lead.Email,
+			"name":  lead.Name,
+			"domain": lead.Domain,
 		}
-		raw, _ := json.Marshal(map[string]string{"reason": reason})
-		event := models.AuditEvent{
-			ID:            util.NewID(),
-			LeadID:        lead.ID,
-			RunID:         &runID,
-			Module:        models.ModuleSocialFootprint,
-			Tool:          "control-plane",
-			CheckedAt:     checkedAt,
-			Status:        "skipped",
-			LegalBasis:    legalBasis,
-			Subject:       subject,
-			RawStderrJSON: string(raw),
+		if di, ok := lead.Results["domain_intel"].(map[string]any); ok {
+			leadMap["domain_intel"] = di
 		}
-		result := map[string]any{
-			"status":  "skipped",
-			"reason":  reason,
-			"handles": []any{},
+
+		res, audits := r.socialVal.Check(leadMap)
+		m, err := resultToMap(res)
+		if err != nil {
+			return models.ModuleResult{}, fmt.Errorf("convert social-footprint result: %w", err)
 		}
-		return models.ModuleResult{Key: "social_footprint", Result: result, AuditEvents: []models.AuditEvent{event}}, nil
+		m["status"] = res.Status
+
+		events := make([]models.AuditEvent, 0, len(audits))
+		for _, a := range audits {
+			auditRaw, _ := json.Marshal(a)
+			auditTime, _ := time.Parse(time.RFC3339, a.CheckedAt)
+			if auditTime.IsZero() {
+				auditTime = checkedAt
+			}
+			events = append(events, models.AuditEvent{
+				ID:            util.NewID(),
+				LeadID:        lead.ID,
+				RunID:         &runID,
+				Module:        models.ModuleSocialFootprint,
+				Tool:          a.Tool,
+				CheckedAt:     auditTime,
+				Status:        a.Status,
+				LegalBasis:    a.LegalBasis,
+				Subject:       models.Subject{Handle: a.Handle},
+				RawStderrJSON: string(auditRaw),
+			})
+		}
+		return models.ModuleResult{Key: "social_footprint", Result: m, AuditEvents: events}, nil
 
 	case models.ModuleDomainIntel:
 		if lead.Domain == "" {
@@ -381,17 +389,6 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			"reason": "not wired in control-plane v1",
 		}, AuditEvents: []models.AuditEvent{event}}, nil
 	}
-}
-
-func (r *Runner) socialAllowed(leadID string) bool {
-	r.socialMu.Lock()
-	defer r.socialMu.Unlock()
-	last, ok := r.socialLast[leadID]
-	allowed := !ok || time.Since(last) >= socialMinInterval
-	if allowed {
-		r.socialLast[leadID] = time.Now().UTC()
-	}
-	return allowed
 }
 
 func (r *Runner) finaliseRun(ctx context.Context, run models.PipelineRun, events []models.AuditEvent, runErr error) {
