@@ -177,7 +177,7 @@ configured** (numverify skipped, local scanner only):
     "e164": "+14152007986",
     "national": "(415) 200-7986",
     "country_code": 1,
-    "risk_flags": ["carrier_unknown"],
+    "risk_flags": [],
     "local": {
       "status": "ok",
       "format_valid": true,
@@ -199,8 +199,7 @@ configured** (numverify skipped, local scanner only):
     "checked_at": "2026-07-13T14:19:05Z",
     "source_tools": [
       "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)"
-    ],
-    "risk_flags": ["carrier_unknown"]
+    ]
   }
 }
 ```
@@ -246,7 +245,7 @@ echo '{"phone":"not-a-phone"}' | ./phone-validate
   "line_type": "unknown",
   "carrier": "unknown",
   "country": "unknown",
-  "risk_flags": ["invalid_number", "carrier_unknown"],
+  "risk_flags": ["invalid_number"],
   "local": {
     "status": "unknown",
     "error": "phone field contains no digits: \"not-a-phone\"",
@@ -322,7 +321,10 @@ go test ./...
   real API key.
 - `TestNumverify_LiveAPIGuarded` hits the real numverify endpoint only when
   `NUMVERIFY_API_KEY` is set and `-short` is not used; it skips under
-  `go test -short`.
+  `go test -short`. In CI without a real API key, the test also skips regardless
+  of `-short`; this is intentional. CI maintainers should note that a passing CI
+  run without `NUMVERIFY_API_KEY` set does not prove the live numverify
+  integration works.
 - `TestNormalizePhone`, `TestRiskFlags`, and `TestRedact` cover normalization,
   risk-flag derivation, and PII redaction.
 - The CLI test (`cmd/phone-validate`) covers the full stdin→stdout contract,

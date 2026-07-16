@@ -252,6 +252,7 @@ func TestNormalizePhone(t *testing.T) {
 
 func TestRiskFlags(t *testing.T) {
 	t.Setenv(APIKeyEnv, "")
+	t.Setenv(BaseURLEnv, "")
 	v := NewValidator(5 * time.Second)
 
 	t.Run("invalid number", func(t *testing.T) {
@@ -259,8 +260,8 @@ func TestRiskFlags(t *testing.T) {
 		if !contains(res.RiskFlags, "invalid_number") {
 			t.Errorf("risk_flags = %v, want invalid_number", res.RiskFlags)
 		}
-		if !contains(res.RiskFlags, "carrier_unknown") {
-			t.Errorf("risk_flags = %v, want carrier_unknown", res.RiskFlags)
+		if contains(res.RiskFlags, "carrier_unknown") {
+			t.Errorf("risk_flags = %v, want no carrier_unknown when numverify skipped", res.RiskFlags)
 		}
 	})
 
