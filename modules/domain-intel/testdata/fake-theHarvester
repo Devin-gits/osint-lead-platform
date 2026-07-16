@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+if [ -n "${FAKE_HARVESTER_ARGS_FILE:-}" ]; then
+    printf '%s\n' "$*" > "$FAKE_HARVESTER_ARGS_FILE"
+fi
+
+output_base=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-f" ]; then
+        shift
+        output_base="$1"
+        break
+    fi
+    shift
+done
+
+if [ -z "$output_base" ]; then
+    echo "missing -f argument" >&2
+    exit 2
+fi
+
+cat > "${output_base}.json" <<'JSON'
+{"hosts":["www.example.com:192.0.2.10","ipv6.example.com:2001:db8::10"],"ips":["192.0.2.10","2001:db8::10"],"emails":["info@example.com"]}
+JSON

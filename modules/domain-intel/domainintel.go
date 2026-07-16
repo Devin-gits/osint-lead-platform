@@ -3,9 +3,9 @@
 // Ingest-stage domain profile defined in docs/architecture.md, adding a
 // namespaced "domain_intel" key that combines two independent sub-tools:
 //
-//   - web_check: a lightweight reimplementation of lissy93/web-check's DNS/SSL/
-//     WHOIS checks ("is this an established, real business domain?"), using only
-//     the Go standard library.
+//   - web_check: a lightweight reimplementation of lissy93/web-check's DNS/TLS/
+//     HTTP/WHOIS checks ("is this an established, real business domain?"), using
+//     only the Go standard library.
 //   - harvester: laramies/theHarvester invoked as an external CLI subprocess
 //     ("what hosts/subdomains/contacts hang off this domain?"), never imported
 //     as a library, restricted to a keyless non-breach-database source
@@ -31,9 +31,9 @@ import (
 const LegalBasis = "GDPR Art.6(1)(f) legitimate-interest"
 
 // DefaultTimeout bounds each sub-tool independently (not the pair). web-check's
-// DNS/SSL/WHOIS network calls are usually sub-second, but theHarvester fans out
-// across several third-party sources and empirically takes several seconds; on
-// expiry that tool degrades to "unknown" while the other still returns.
+// DNS/TLS/HTTP/WHOIS network calls are usually sub-second, but theHarvester
+// fans out across several third-party sources and empirically takes several
+// seconds; on expiry that tool degrades to "unknown" while the other still returns.
 const DefaultTimeout = 60 * time.Second
 
 // Result is the value stored under the lead's "domain_intel" key. It namespaces
@@ -48,7 +48,7 @@ type Result struct {
 
 // AuditRecord is one structured audit-log line. One is emitted per underlying
 // tool per call, regardless of outcome: which tool/version ran, when, the
-// domain, the resulting status, and the legal basis — the facts
+// domain, the resulting status/error, and the legal basis — the facts
 // docs/architecture.md and docs/compliance.md require be logged per run.
 type AuditRecord struct {
 	Tool       string `json:"tool"`
@@ -56,6 +56,7 @@ type AuditRecord struct {
 	Domain     string `json:"domain"`
 	Status     string `json:"status"`
 	LegalBasis string `json:"legal_basis"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Analyzer runs the domain-intel checks. Construct with NewAnalyzer. It is safe
@@ -105,8 +106,8 @@ func (a *Analyzer) Analyze(domain string) (Result, []AuditRecord) {
 		SourceTools: []string{WebCheckTool, HarvesterTool},
 	}
 	audits := []AuditRecord{
-		newAudit(WebCheckTool, domain, web.Status, now),
-		newAudit(HarvesterTool, domain, har.Status, now),
+		newAudit(WebCheckTool, domain, web.Status, web.Error, now),
+		newAudit(HarvesterTool, domain, har.Status, har.Error, now),
 	}
 	return res, audits
 }
@@ -136,7 +137,7 @@ func safeHarvester(ctx context.Context, domain string, timeout time.Duration) (r
 				Hosts:      []Host{},
 				IPs:        []string{},
 				Emails:     []string{},
-				Sources:    append([]string(nil), allowedSources...),
+				Sources:    filteredHarvesterSources(),
 				CheckedAt:  time.Now().UTC().Format(time.RFC3339),
 				SourceTool: HarvesterTool,
 				Error:      recoverMsg(r),
@@ -160,12 +161,13 @@ func toString(v interface{}) string {
 	return "unknown panic"
 }
 
-func newAudit(tool, domain, status string, at time.Time) AuditRecord {
+func newAudit(tool, domain, status, errorNote string, at time.Time) AuditRecord {
 	return AuditRecord{
 		Tool:       tool,
 		CheckedAt:  at.Format(time.RFC3339),
 		Domain:     normalizeDomain(domain),
 		Status:     status,
 		LegalBasis: LegalBasis,
+		Error:      errorNote,
 	}
 }

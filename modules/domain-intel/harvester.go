@@ -25,6 +25,8 @@ const HarvesterBinaryEnv = "DOMAIN_INTEL_HARVESTER_BIN"
 // is unset.
 const defaultHarvesterBin = "theHarvester"
 
+const harvesterLimit = 200
+
 // allowedSources is the keyless-capable, non-breach-database source allowlist
 // passed to theHarvester's -b flag. Breach-database modules (haveibeenpwned,
 // dehashed, leaklookup) are deliberately EXCLUDED per the Stage 1 decision's
@@ -32,6 +34,12 @@ const defaultHarvesterBin = "theHarvester"
 // (Hunter, SecurityTrails, Shodan, Censys) since keyless operation is the
 // documented default. These four are keyless and return host/subdomain data.
 var allowedSources = []string{"hackertarget", "crtsh", "rapiddns", "certspotter"}
+
+var blockedSources = map[string]struct{}{
+	"haveibeenpwned": {},
+	"dehashed":       {},
+	"leaklookup":     {},
+}
 
 // Host is one discovered subdomain and its resolved IP, parsed from
 // theHarvester's "subdomain:ip" host strings.
@@ -71,7 +79,7 @@ type harvesterJSON struct {
 // unparseable output all yield Status "unknown" with an Error note.
 func runHarvester(ctx context.Context, domain string, timeout time.Duration) HarvesterResult {
 	now := time.Now().UTC()
-	sources := append([]string(nil), allowedSources...)
+	sources := filteredHarvesterSources()
 	res := HarvesterResult{
 		Status:     "unknown",
 		Hosts:      []Host{},
@@ -108,10 +116,10 @@ func runHarvester(ctx context.Context, domain string, timeout time.Duration) Har
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// -d domain  -b <allowlist>  -f <base> (writes <base>.json + .xml)
+	// -d domain  -b <allowlist>  -l <limit>  -f <base> (writes <base>.json + .xml)
 	// The source allowlist is a fixed constant, never interpolated from the
 	// lead record, so the -b argument cannot be influenced by input.
-	args := []string{"-d", domain, "-b", strings.Join(sources, ","), "-f", outBase}
+	args := []string{"-d", domain, "-b", strings.Join(sources, ","), "-l", fmt.Sprintf("%d", harvesterLimit), "-f", outBase}
 	cmd := exec.CommandContext(c, bin, args...)
 	combined, runErr := cmd.CombinedOutput()
 
@@ -151,6 +159,16 @@ func runHarvester(ctx context.Context, domain string, timeout time.Duration) Har
 	}
 	res.Status = "ok"
 	return res
+}
+
+func filteredHarvesterSources() []string {
+	sources := make([]string, 0, len(allowedSources))
+	for _, source := range allowedSources {
+		if _, blocked := blockedSources[strings.ToLower(source)]; !blocked {
+			sources = append(sources, source)
+		}
+	}
+	return sources
 }
 
 // splitHost parses theHarvester's "subdomain:ip" host string. It splits on the
