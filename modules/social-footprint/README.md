@@ -292,10 +292,39 @@ pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-pr
 
 The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
 
+## Sherlock backend (optional second engine)
+
+In addition to Maigret, the module supports [Sherlock](https://github.com/sherlock-project/sherlock) (MIT) as a
+second backend. Sherlock maintains an independent site database, providing better cross-validation coverage.
+
+Select the backend via `SOCIAL_FOOTPRINT_BACKEND`:
+
+| Value | Behaviour |
+|---|---|
+| `maigret` (default) | Maigret only — existing behaviour, unchanged. Uses Maigret's curated 15-platform list. |
+| `sherlock` | Sherlock only via `wrapper/sherlock_check.py`. Uses Sherlock's curated 14-platform list. |
+| `both` | Maigret first over its 15-platform list, then Sherlock over its 14-platform list; Sherlock upgrades Maigret's `unknown` answers to definitive where possible; Maigret's definitive results are never downgraded. The reported `platform_count` is Maigret's 15; `sherlock_platform_count` is added to `metadata`. |
+
+**Install:**
+```bash
+pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-project==0.16.1
+```
+
+**Optional env vars:**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use |
+| `SOCIAL_FOOTPRINT_SHERLOCK_PYTHON` | Falls back to `SOCIAL_FOOTPRINT_PYTHON`, then `python3` | Python interpreter for Sherlock wrapper |
+| `SOCIAL_FOOTPRINT_SHERLOCK_WRAPPER` | *(auto-located)* | Explicit path to `wrapper/sherlock_check.py` |
+
+The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
+
 ## Test
 
 ```bash
-go test ./...
+make test       # deterministic, no cache: go test -count=1 ./...
+make test-short # unit tests only: go test -count=1 -short ./...
 ```
 
 - **Offline unit tests** (no Python, no network): `socialfootprint_test.go`
@@ -303,8 +332,8 @@ go test ./...
   `skipped` degrade, per-handle `unknown` degrade on runner error, the
   `MaxHandles` fan-out cap, and the curated-scope guardrail.
 - `handles_test.go` covers handle derivation (email primary + variants, `+tag`
-  stripping, secondary harvester mining with infra-label exclusion, dedup, and
-  `normalizeHandle` validation).
+  stripping, secondary harvester mining with infra-label exclusion, dedup,
+  `normalizeHandle` validation, and **origin labels** on every candidate.
 - `ratelimit_test.go` proves the limiter does not delay the first call, spaces
   the second, honors a zero (disabled) interval, and doubles/resets its effective
   interval correctly for exponential backoff.
@@ -312,6 +341,15 @@ go test ./...
   the `skipped` path fully offline, and a real **subprocess** round-trip against a
   fake wrapper script (proving JSON parse + audit-redaction without needing a live
   Maigret), plus the only non-zero-exit path (unreadable stdin).
+- **Integration tests** are guarded by the `integration` build tag and never run
+  under `go test ./...`:
+
+  ```bash
+  make test-integration   # go test -count=1 -tags integration ./...
+  ```
+
+  `maigret_integration_test.go` performs a live Maigret run and is skipped if
+  `python3` is unavailable.
 
 The output shown above under **Run it** was additionally captured from a **live**
 run against the real embedded Maigret 0.6.2 during development.
@@ -321,8 +359,9 @@ run against the real embedded Maigret 0.6.2 during development.
 - Go (built and tested with the toolchain pinned in `go.mod`, `go 1.22.5`).
   **No third-party Go dependencies** (standard library only).
 - **Python 3.10+** with **`maigret==0.6.2`** and **`sherlock-project==0.16.1`**
-  (both **MIT**), pinned in [`requirements.txt`](requirements.txt) — each embedded
-  as a library by its wrapper, not shelled out to as a CLI. Neither needs API keys
-  for username search; each wrapper loads the bundled site database (`data.json`)
-  by default (no per-run auto-download).
+  (both **MIT**), pinned in
+  [`requirements.txt`](requirements.txt) — each embedded as a library by its wrapper,
+  not shelled out to as a CLI. Neither needs API keys for username search; each
+  wrapper loads the bundled site database (`data.json`) by default (no per-run
+  auto-download).
 - The module functions with **zero API keys and no paid services**.

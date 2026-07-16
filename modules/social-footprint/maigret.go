@@ -179,8 +179,10 @@ func parseWrapperOutput(s string) (wrapperOutput, error) {
 }
 
 // extractJSONObject pulls the first top-level JSON object from s. It looks for
-// the first '{' and returns the substring that balances braces, or s if no
-// object is found.
+// the first '{' and returns the substring that balances object braces, or s if
+// no object is found. Only '{' and '}' are counted for object boundaries; '['/']'
+// (arrays) are ignored so a results array cannot make the depth negative or cause
+// an early return at an inner object.
 func extractJSONObject(s string) string {
 	start := strings.Index(s, "{")
 	if start < 0 {
@@ -208,11 +210,11 @@ func extractJSONObject(s string) string {
 		switch c {
 		case '"':
 			inString = true
-		case '{', '[':
+		case '{':
 			depth++
-		case '}', ']':
+		case '}':
 			depth--
-			if depth == 0 && c == '}' {
+			if depth == 0 {
 				return s[start : i+1]
 			}
 		}
