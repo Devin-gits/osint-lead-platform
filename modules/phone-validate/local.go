@@ -5,8 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nyaruka/phonenumbers/v2"
-	"github.com/nyaruka/phonenumbers/v2/carrier"
+	"github.com/nyaruka/phonenumbers"
 )
 
 // LocalTool identifies the offline engine and the pinned version this module's
@@ -14,7 +13,7 @@ import (
 // libphonenumber — the same engine PhoneInfoga's `local` scanner wraps. We build
 // on it directly (rather than importing PhoneInfoga, which is GPL-3.0) so this
 // MIT module incurs no copyleft obligation; see README.
-const LocalTool = "nyaruka/phonenumbers@v2.0.3 (libphonenumber; PhoneInfoga local-scanner engine)"
+const LocalTool = "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)"
 
 // carrierLang is the language for offline carrier-name lookups.
 const carrierLang = "en"
@@ -102,7 +101,7 @@ func runLocal(phone string, now time.Time) LocalResult {
 	}
 	// Offline carrier lookup only returns a name for mobile-type numbers in
 	// regions without number portability; empty is normal and left as such.
-	if name, cErr := carrier.GetNameForNumber(num, carrierLang); cErr == nil && name != "" {
+	if name, cErr := phonenumbers.GetCarrierForNumber(num, carrierLang); cErr == nil && name != "" {
 		res.Carrier = name
 	}
 	return res
