@@ -8,9 +8,5 @@
 # (see evaluations/maigret.md and docs/decisions/stage-1-decision.md).
 # sherlock-project==0.16.1 is pinned to the version verified by the new
 # wrapper and tests added in this PR (Stage 2 implementation).
-#
-# SpiderFoot is NOT installed from PyPI. To enable the optional SpiderFoot
-# enrichment source, clone https://github.com/smicallef/spiderfoot and point
-# SOCIAL_FOOTPRINT_SPIDERFOOT_ROOT at the checkout directory.
 maigret==0.6.2
 sherlock-project==0.16.1
