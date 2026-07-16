@@ -4,7 +4,6 @@
 package models
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -79,17 +78,17 @@ type Subject struct {
 // AuditEvent is one structured audit line. raw_stderr_json preserves the
 // module's stderr/audit payload verbatim.
 type AuditEvent struct {
-	ID            string          `json:"id"`
-	LeadID        string          `json:"lead_id"`
-	RunID         *string         `json:"run_id,omitempty"`
-	Module        string          `json:"module"`
-	Tool          string          `json:"tool"`
-	CheckedAt     time.Time       `json:"checked_at"`
-	Status        string          `json:"status"`
-	LegalBasis    string          `json:"legal_basis"`
-	Subject       Subject         `json:"subject"`
-	RawStderrJSON json.RawMessage `json:"raw_stderr_json,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
+	ID            string    `json:"id"`
+	LeadID        string    `json:"lead_id"`
+	RunID         *string   `json:"run_id,omitempty"`
+	Module        string    `json:"module"`
+	Tool          string    `json:"tool"`
+	CheckedAt     time.Time `json:"checked_at"`
+	Status        string    `json:"status"`
+	LegalBasis    string    `json:"legal_basis"`
+	Subject       Subject   `json:"subject"`
+	RawStderrJSON string    `json:"raw_stderr_json,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // PipelineRun records a single-lead or batch execution.

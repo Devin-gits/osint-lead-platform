@@ -248,7 +248,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			Status:        audit.Status,
 			LegalBasis:    audit.LegalBasis,
 			Subject:       models.Subject{Email: audit.Email},
-			RawStderrJSON: raw,
+			RawStderrJSON: string(raw),
 		}
 		return models.ModuleResult{Key: "email_validate", Result: res, AuditEvents: []models.AuditEvent{event}}, nil
 
@@ -271,7 +271,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 				Status:        a.Status,
 				LegalBasis:    a.LegalBasis,
 				Subject:       models.Subject{PhoneRedacted: a.Phone},
-				RawStderrJSON: auditRaw,
+				RawStderrJSON: string(auditRaw),
 			})
 		}
 		return models.ModuleResult{Key: "phone_validate", Result: res, AuditEvents: events}, nil
@@ -293,7 +293,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			Status:        "skipped",
 			LegalBasis:    legalBasis,
 			Subject:       subject,
-			RawStderrJSON: raw,
+			RawStderrJSON: string(raw),
 		}
 		result := map[string]any{
 			"status":  "skipped",
@@ -319,7 +319,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			Status:        "skipped",
 			LegalBasis:    legalBasis,
 			Subject:       subject,
-			RawStderrJSON: raw,
+			RawStderrJSON: string(raw),
 		}
 		return models.ModuleResult{Key: strings.ReplaceAll(name, "-", "_"), Result: map[string]any{
 			"status": "skipped",

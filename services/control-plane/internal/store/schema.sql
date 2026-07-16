@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     status text NOT NULL,
     legal_basis text NOT NULL,
     subject jsonb NOT NULL DEFAULT '{}'::jsonb,
-    raw_stderr_json jsonb,
+    raw_stderr_json text,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 

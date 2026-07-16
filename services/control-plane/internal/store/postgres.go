@@ -157,19 +157,13 @@ func (p *PostgresStore) CreateAuditEvent(ctx context.Context, event models.Audit
 	if err != nil {
 		return models.AuditEvent{}, fmt.Errorf("marshal subject: %w", err)
 	}
-	var rawJSON []byte
-	if len(event.RawStderrJSON) > 0 {
-		rawJSON = event.RawStderrJSON
-	} else {
-		rawJSON = []byte("null")
-	}
 
 	event.CreatedAt = time.Now().UTC()
 	_, err = p.db.ExecContext(ctx, `
 		INSERT INTO audit_events (id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_stderr_json, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, event.ID, event.LeadID, nullStringPtr(event.RunID), event.Module, event.Tool,
-		event.CheckedAt.UTC(), event.Status, event.LegalBasis, subjectJSON, rawJSON, event.CreatedAt)
+		event.CheckedAt.UTC(), event.Status, event.LegalBasis, subjectJSON, nullString(event.RawStderrJSON), event.CreatedAt)
 	if err != nil {
 		return models.AuditEvent{}, fmt.Errorf("insert audit event: %w", err)
 	}
@@ -399,7 +393,7 @@ func scanLeads(rows *sql.Rows) ([]models.Lead, error) {
 func scanAuditEvent(s scannable) (models.AuditEvent, error) {
 	var e models.AuditEvent
 	var subject []byte
-	var raw []byte
+	var raw sql.NullString
 	var runID sql.NullString
 	err := s.Scan(&e.ID, &e.LeadID, &runID, &e.Module, &e.Tool, &e.CheckedAt, &e.Status,
 		&e.LegalBasis, &subject, &raw, &e.CreatedAt)
@@ -415,8 +409,8 @@ func scanAuditEvent(s scannable) (models.AuditEvent, error) {
 	if len(subject) > 0 {
 		_ = json.Unmarshal(subject, &e.Subject)
 	}
-	if len(raw) > 0 && string(raw) != "null" {
-		e.RawStderrJSON = raw
+	if raw.Valid && raw.String != "" && raw.String != "null" {
+		e.RawStderrJSON = raw.String
 	}
 	return e, nil
 }
