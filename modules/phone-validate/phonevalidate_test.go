@@ -3,6 +3,8 @@ package phonevalidate
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -229,5 +231,148 @@ func assertAudits(t *testing.T, audits []AuditRecord, wantLocalStatus, wantNumve
 		if _, err := time.Parse(time.RFC3339, a.CheckedAt); err != nil {
 			t.Errorf("audit.checked_at = %q, not RFC3339: %v", a.CheckedAt, err)
 		}
+	}
+}
+
+func TestNormalizePhone(t *testing.T) {
+	cases := map[string]string{
+		"+14152007986":         "+14152007986",
+		"  +1 (415) 200-7986 ": "+14152007986",
+		"14152007986":          "+14152007986",
+		"+44 20 7946 0958":     "+442079460958",
+		"not-a-phone":          "",
+		"":                     "",
+	}
+	for in, want := range cases {
+		if got := normalizePhone(in); got != want {
+			t.Errorf("normalizePhone(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestRiskFlags(t *testing.T) {
+	t.Setenv(APIKeyEnv, "")
+	v := NewValidator(5 * time.Second)
+
+	t.Run("invalid number", func(t *testing.T) {
+		res, _ := v.Validate("+1 555 444 1212")
+		if !contains(res.RiskFlags, "invalid_number") {
+			t.Errorf("risk_flags = %v, want invalid_number", res.RiskFlags)
+		}
+		if !contains(res.RiskFlags, "carrier_unknown") {
+			t.Errorf("risk_flags = %v, want carrier_unknown", res.RiskFlags)
+		}
+	})
+
+	t.Run("toll-free line type", func(t *testing.T) {
+		res, _ := v.Validate("+18005551234")
+		if res.LineType != "toll_free" {
+			t.Errorf("line_type = %q, want toll_free", res.LineType)
+		}
+		if !contains(res.RiskFlags, "toll_free") {
+			t.Errorf("risk_flags = %v, want toll_free", res.RiskFlags)
+		}
+	})
+
+	t.Run("premium-rate line type", func(t *testing.T) {
+		res, _ := v.Validate("+19005550199")
+		if res.LineType != "premium_rate" {
+			t.Errorf("line_type = %q, want premium_rate", res.LineType)
+		}
+		if !contains(res.RiskFlags, "premium_rate") {
+			t.Errorf("risk_flags = %v, want premium_rate", res.RiskFlags)
+		}
+	})
+
+	t.Run("numverify line type wins", func(t *testing.T) {
+		body := `{"valid":true,"number":"14152007986","country_code":"US","carrier":"AT&T Mobility LLC","line_type":"voip"}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		defer srv.Close()
+
+		t.Setenv(APIKeyEnv, "test-key")
+		t.Setenv(BaseURLEnv, srv.URL)
+
+		v2 := NewValidator(5 * time.Second)
+		res, _ := v2.Validate("+14152007986")
+		if res.LineType != "voip" {
+			t.Errorf("line_type = %q, want voip", res.LineType)
+		}
+		if !contains(res.RiskFlags, "voip") {
+			t.Errorf("risk_flags = %v, want voip", res.RiskFlags)
+		}
+	})
+}
+
+func contains(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNumverify_ConfigFile verifies the optional NUMVERIFY_CONFIG JSON file is
+// read and used when env vars are not set; env vars still take precedence.
+func TestNumverify_ConfigFile(t *testing.T) {
+	var gotKey string
+	body := `{"valid":true,"number":"14152007986","country_code":"US","carrier":"Test Carrier","line_type":"mobile"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.URL.Query().Get("access_key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	cfgDir := t.TempDir()
+	cfgPath := filepath.Join(cfgDir, "numverify.json")
+	cfg := []byte(`{"api_key":"from-config","base_url":"` + srv.URL + `"}`)
+	if err := os.WriteFile(cfgPath, cfg, 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv(APIKeyEnv, "")
+	t.Setenv(BaseURLEnv, "")
+	t.Setenv("NUMVERIFY_CONFIG", cfgPath)
+
+	v := NewValidator(5 * time.Second)
+	res, _ := v.Validate("+14152007986")
+
+	if gotKey != "from-config" {
+		t.Errorf("stub received access_key = %q, want from-config", gotKey)
+	}
+	if res.Numverify.Status != StatusOK {
+		t.Fatalf("numverify.status = %q, want ok", res.Numverify.Status)
+	}
+	if res.Carrier != "Test Carrier" {
+		t.Errorf("merged carrier = %q, want Test Carrier", res.Carrier)
+	}
+}
+
+// TestNumverify_LiveAPIGuarded makes a real numverify API call only when a key
+// is configured and tests are not running in short mode. CI can run the full
+// suite and hit the live endpoint; local short runs stay offline.
+func TestNumverify_LiveAPIGuarded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live numverify API call in short mode")
+	}
+	if os.Getenv(APIKeyEnv) == "" {
+		t.Skip("NUMVERIFY_API_KEY not set; skipping live numverify test")
+	}
+
+	v := NewValidator(30 * time.Second)
+	res, audits := v.Validate("+14152007986")
+
+	if res.Status != "ok" {
+		t.Fatalf("local status = %q, want ok", res.Status)
+	}
+	if res.Numverify.Status != StatusOK && res.Numverify.Status != StatusUnknown {
+		t.Fatalf("numverify.status = %q, want ok or unknown", res.Numverify.Status)
+	}
+	if len(audits) != 2 {
+		t.Fatalf("expected 2 audit records, got %d", len(audits))
 	}
 }

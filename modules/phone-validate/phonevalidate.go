@@ -59,6 +59,7 @@ type Result struct {
 	E164          string          `json:"e164,omitempty"`  // normalized E.164 form, when parseable
 	National      string          `json:"national,omitempty"`
 	CountryCode   int32           `json:"country_code,omitempty"` // calling code, e.g. 1, 44
+	RiskFlags     []string        `json:"risk_flags,omitempty"`   // fraud-relevant signals derived from line_type/validity/carrier
 	Local         LocalResult     `json:"local"`
 	Numverify     NumverifyResult `json:"numverify"`
 	CheckedAt     string          `json:"checked_at"`   // RFC3339 UTC
@@ -154,7 +155,34 @@ func merge(loc LocalResult, nv NumverifyResult, now time.Time) Result {
 	if nv.Status != StatusSkipped {
 		res.SourceTools = append(res.SourceTools, NumverifyTool)
 	}
+	res.RiskFlags = deriveRiskFlags(res)
 	return res
+}
+
+// deriveRiskFlags extracts simple, fraud-relevant risk signals from the merged
+// result. It is intentionally conservative: it flags line types commonly abused
+// for throw-away/fraud accounts and numbers where neither source could resolve a
+// carrier or confirm validity. The list is empty for ordinary, well-formed
+// mobile/fixed-line numbers with a known carrier.
+func deriveRiskFlags(r Result) []string {
+	var flags []string
+	if !r.IsValidNumber {
+		flags = append(flags, "invalid_number")
+	}
+	switch r.LineType {
+	case "voip":
+		flags = append(flags, "voip")
+	case "toll_free":
+		flags = append(flags, "toll_free")
+	case "premium_rate":
+		flags = append(flags, "premium_rate")
+	case "pager":
+		flags = append(flags, "pager")
+	}
+	if r.Carrier == "" || r.Carrier == unknown {
+		flags = append(flags, "carrier_unknown")
+	}
+	return flags
 }
 
 // safeLocal runs the local scanner with a panic recover so an unexpected panic

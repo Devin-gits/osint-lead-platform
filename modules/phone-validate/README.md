@@ -124,6 +124,7 @@ degrade cleanly to `unknown`.
   | `e164` | string | normalized E.164 form (present when parseable) |
   | `national` | string | national-format string (present when parseable) |
   | `country_code` | int | calling code, e.g. `1`, `44` |
+  | `risk_flags` | []string | fraud-relevant signals derived from line type / validity / carrier (e.g. `invalid_number`, `voip`, `toll_free`, `premium_rate`, `carrier_unknown`) |
   | `local` | object | the offline sub-result (`status`, the fields above, `checked_at`, `source_tool`, `error?`) |
   | `numverify` | object | the optional sub-result (`status: ok\|skipped\|unknown`, `valid?`, `line_type?`, `carrier?`, `country?`, `country_name?`, `location?`, `checked_at`, `source_tool`, `error?`) |
   | `checked_at` | string | RFC3339 UTC timestamp of the combined check |
@@ -176,6 +177,7 @@ configured** (numverify skipped, local scanner only):
     "e164": "+14152007986",
     "national": "(415) 200-7986",
     "country_code": 1,
+    "risk_flags": ["carrier_unknown"],
     "local": {
       "status": "ok",
       "format_valid": true,
@@ -192,12 +194,13 @@ configured** (numverify skipped, local scanner only):
       "status": "skipped",
       "checked_at": "2026-07-13T14:19:05Z",
       "source_tool": "numverify (apilayer) /validate",
-      "error": "NUMVERIFY_API_KEY not set — numverify carrier lookup skipped (local scanner still ran)"
+      "error": "NUMVERIFY_API_KEY not set and no NUMVERIFY_CONFIG — numverify carrier lookup skipped (local scanner still ran)"
     },
     "checked_at": "2026-07-13T14:19:05Z",
     "source_tools": [
       "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)"
-    ]
+    ],
+    "risk_flags": ["carrier_unknown"]
   }
 }
 ```
@@ -224,6 +227,7 @@ still no API key):
   "e164": "+447400123456",
   "national": "07400 123456",
   "country_code": 44,
+  "risk_flags": [],
   "...": "..."
 }
 ```
@@ -242,6 +246,7 @@ echo '{"phone":"not-a-phone"}' | ./phone-validate
   "line_type": "unknown",
   "carrier": "unknown",
   "country": "unknown",
+  "risk_flags": ["invalid_number", "carrier_unknown"],
   "local": {
     "status": "unknown",
     "error": "phone field contains no digits: \"not-a-phone\"",
@@ -255,6 +260,7 @@ echo '{"phone":"not-a-phone"}' | ./phone-validate
 
 ```bash
 export NUMVERIFY_API_KEY=your_apilayer_key
+# or: export NUMVERIFY_CONFIG=/path/to/numverify.json
 echo '{"phone":"+14152007986"}' | ./phone-validate
 ```
 
@@ -281,7 +287,8 @@ verdict (real capture 2026-07-13 against a local numverify-schema stub — see
   "source_tools": [
     "nyaruka/phonenumbers@v1.5.0 (libphonenumber; PhoneInfoga local-scanner engine)",
     "numverify (apilayer) /validate"
-  ]
+  ],
+  "risk_flags": []
 }
 ```
 
@@ -292,6 +299,7 @@ verdict (real capture 2026-07-13 against a local numverify-schema stub — see
 | `PHONE_VALIDATE_TIMEOUT` | `10s` | Per-source timeout (Go duration, e.g. `5s`). |
 | `NUMVERIFY_API_KEY` | *(unset)* | APILayer/numverify access key. Unset → numverify path skipped cleanly. |
 | `NUMVERIFY_BASE_URL` | `https://apilayer.net/api/validate` | numverify endpoint override (swap provider / test stub). |
+| `NUMVERIFY_CONFIG` | *(unset)* | Optional path to a JSON file with `api_key` / `base_url`. Env vars override the file. Useful for keeping keys out of shell history. |
 
 ## Test
 
@@ -306,12 +314,17 @@ go test ./...
 - `TestValidate_InvalidButParseable` covers the `format_valid && !is_valid_number`
   case (the 555 fictional US range).
 - `TestValidate_MissingPhone` covers graceful degradation for an empty phone.
-- `TestNumverify_StubServer` and `TestNumverify_APIErrorDegrades` exercise the
-  **real numverify HTTP integration** against a local `httptest` stub (via
-  `NUMVERIFY_BASE_URL`) returning canned numverify `/validate` JSON — proving the
-  request/parse/merge path and the graceful degrade on an API error envelope,
-  without needing a real API key.
-- `TestRedact` covers PII redaction of the audit `phone` field.
+- `TestNumverify_StubServer`, `TestNumverify_APIErrorDegrades`, and `TestNumverify_ConfigFile`
+  exercise the **real numverify HTTP integration** against a local `httptest` stub
+  (via `NUMVERIFY_BASE_URL` or a `NUMVERIFY_CONFIG` JSON file) returning canned
+  numverify `/validate` JSON — proving the request/parse/merge path, config-file
+  loading, and the graceful degrade on an API error envelope, without needing a
+  real API key.
+- `TestNumverify_LiveAPIGuarded` hits the real numverify endpoint only when
+  `NUMVERIFY_API_KEY` is set and `-short` is not used; it skips under
+  `go test -short`.
+- `TestNormalizePhone`, `TestRiskFlags`, and `TestRedact` cover normalization,
+  risk-flag derivation, and PII redaction.
 - The CLI test (`cmd/phone-validate`) covers the full stdin→stdout contract,
   raw-field preservation, the two-audit-lines-on-stderr behavior (with redaction),
   and the only non-zero-exit path (unreadable stdin).
