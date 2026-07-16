@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Users } from "lucide-react";
-import { useLeads, useCreateLead } from "@/lib/api/hooks";
+import { Plus, Search, Users, AlertTriangle, X } from "lucide-react";
+import { useLeads, useCreateLead, useModules, useRunPipeline } from "@/lib/api/hooks";
+import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -23,7 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import { cn } from "@/lib/utils/cn";
-import { RiskLevel } from "@/lib/api/types";
+import { RiskLevel, ModuleName } from "@/lib/api/types";
 
 const stageOptions = [
   { value: "", label: "All stages" },
@@ -49,8 +50,14 @@ const moduleStatusOptions = [
   { value: "not_run", label: "not run" },
 ];
 
+const availableModules: { name: ModuleName; label: string }[] = [
+  { name: "email-validate", label: "Email validate" },
+  { name: "phone-validate", label: "Phone validate" },
+];
+
 export default function LeadsPage() {
   const router = useRouter();
+  const { addToast } = useToast();
   const [filters, setFilters] = useState({
     stage: "",
     risk: "",
@@ -68,9 +75,20 @@ export default function LeadsPage() {
     domain: "",
     permission_ref: "",
   });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error } = useLeads(filters);
   const create = useCreateLead();
+  const { data: modules } = useModules();
+  const pipeline = useRunPipeline();
+
+  const moduleAvailable = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    modules?.forEach((m) => {
+      map[m.name] = m.dev_status === "available";
+    });
+    return map;
+  }, [modules]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +97,7 @@ export default function LeadsPage() {
         ...form,
         source_id: "",
       });
+      addToast("Lead created", "success");
       setCreateOpen(false);
       setForm({ name: "", email: "", phone: "", company: "", domain: "", permission_ref: "" });
       router.push(`/leads/${created.id}`);
@@ -87,11 +106,55 @@ export default function LeadsPage() {
     }
   };
 
+  const toggleSelect = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+  };
+
+  const toggleAll = () => {
+    if (!data) return;
+    if (selected.size === data.data.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(data.data.map((l) => l.id)));
+    }
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const runBulk = async (module: ModuleName) => {
+    if (selected.size === 0) return;
+    try {
+      const body = {
+        lead_ids: Array.from(selected),
+        modules: [module],
+      };
+      const res = await pipeline.mutateAsync(body);
+      addToast(
+        `Pipeline started for ${selected.size} lead(s).`,
+        "success"
+      );
+      setTimeout(() => {
+        router.push(`/runs/${res.run_id}`);
+      }, 400);
+      clearSelection();
+    } catch (err) {
+      addToast(
+        err instanceof Error ? err.message : "Pipeline run failed",
+        "danger"
+      );
+    }
+  };
+
   const stages = ["raw", "enriched", "validated", "crm_ready"];
   const countsByStage: Record<string, number> = {};
   data?.data.forEach((lead) => {
     countsByStage[lead.stage] = (countsByStage[lead.stage] || 0) + 1;
   });
+
+  const allSelected = data?.data.length ? selected.size === data.data.length : false;
 
   return (
     <div className="space-y-6">
@@ -167,6 +230,31 @@ export default function LeadsPage() {
         </div>
       )}
 
+      {selected.size > 0 && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
+          <div className="flex items-center gap-2 text-sm text-foreground">
+            <span className="font-medium">{selected.size}</span> selected
+            <Button size="sm" variant="ghost" onClick={clearSelection}>
+              <X className="mr-1 h-3.5 w-3.5" />
+              Clear
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {availableModules.map(({ name, label }) => (
+              <Button
+                key={name}
+                size="sm"
+                variant="secondary"
+                disabled={!moduleAvailable[name] || pipeline.isPending}
+                onClick={() => runBulk(name)}
+              >
+                {pipeline.isPending ? "Running…" : `Run ${label}`}
+              </Button>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card>
         {isLoading ? (
           <div className="space-y-3 p-4">
@@ -184,6 +272,15 @@ export default function LeadsPage() {
           <Table>
             <TableHead>
               <TableRow>
+                <TableHeader className="w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all leads"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
+                  />
+                </TableHeader>
                 <TableHeader>Contact</TableHeader>
                 <TableHeader>Company</TableHeader>
                 <TableHeader>Stage</TableHeader>
@@ -199,6 +296,15 @@ export default function LeadsPage() {
                   onClick={() => router.push(`/leads/${lead.id}`)}
                   className="cursor-pointer"
                 >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select lead ${lead.name || lead.id}`}
+                      checked={selected.has(lead.id)}
+                      onChange={() => toggleSelect(lead.id)}
+                      className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
+                    />
+                  </TableCell>
                   <TableCell>
                     <div className="font-medium text-foreground">{lead.name || "—"}</div>
                     <div className="text-xs text-foreground-muted">{lead.email || lead.domain || lead.id}</div>
@@ -227,7 +333,9 @@ export default function LeadsPage() {
                       })}
                     </div>
                   </TableCell>
-                  <TableCell>{lead.permission_ref || "—"}</TableCell>
+                  <TableCell>
+                    <PermissionRefCell permissionRef={lead.permission_ref} />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -274,11 +382,16 @@ export default function LeadsPage() {
           <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
           <Input label="Company" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
           <Input label="Domain" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} />
-          <Input
-            label="Permission ref"
-            value={form.permission_ref}
-            onChange={(e) => setForm({ ...form, permission_ref: e.target.value })}
-          />
+          <div>
+            <Input
+              label="Permission ref"
+              value={form.permission_ref}
+              onChange={(e) => setForm({ ...form, permission_ref: e.target.value })}
+            />
+            <p className="mt-1 text-xs text-foreground-muted">
+              A permission_ref is required for compliant enrichment and is logged in every audit event.
+            </p>
+          </div>
           {create.error && (
             <div className="text-sm text-danger">{create.error.message}</div>
           )}
@@ -300,4 +413,16 @@ function RiskBadge({ level }: { level: RiskLevel }) {
   const variant =
     level === "low" ? "success" : level === "medium" ? "warning" : level === "high" ? "danger" : "outline";
   return <Badge variant={variant}>{level}</Badge>;
+}
+
+function PermissionRefCell({ permissionRef }: { permissionRef?: string }) {
+  if (permissionRef) {
+    return <span className="text-sm text-foreground-secondary">{permissionRef}</span>;
+  }
+  return (
+    <Badge variant="warning" className="gap-1">
+      <AlertTriangle className="h-3 w-3" />
+      Missing
+    </Badge>
+  );
 }

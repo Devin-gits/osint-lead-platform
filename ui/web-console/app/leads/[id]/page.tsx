@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Play, RefreshCw } from "lucide-react";
+import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { useLead, useRunLeadModules, useModules } from "@/lib/api/hooks";
+import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +15,6 @@ import { AuditLogPanel } from "@/components/ui/AuditLogPanel";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { AlertCircle } from "lucide-react";
 import { ModuleName } from "@/lib/api/types";
 
 const moduleOrder: { key: string; label: string; module: ModuleName }[] = [
@@ -29,13 +29,20 @@ export default function LeadDetailPage() {
   const { data: lead, isLoading, error, refetch } = useLead(id);
   const { data: modules } = useModules();
   const run = useRunLeadModules();
+  const { addToast } = useToast();
   const [running, setRunning] = useState<ModuleName | null>(null);
 
   const handleRun = async (module: ModuleName) => {
     setRunning(module);
     try {
       await run.mutateAsync({ id, body: { modules: [module] } });
+      addToast(`${module} completed`, "success");
       refetch();
+    } catch (err) {
+      addToast(
+        err instanceof Error ? err.message : `Failed to run ${module}`,
+        "danger"
+      );
     } finally {
       setRunning(null);
     }
@@ -90,7 +97,19 @@ export default function LeadDetailPage() {
             <Field label="Company" value={lead.company || "—"} />
             <Field label="Domain" value={lead.domain || "—"} />
             <Field label="Source ID" value={lead.source_id || "—"} />
-            <Field label="Permission ref" value={lead.permission_ref || "—"} />
+            <Field
+              label="Permission ref"
+              value={
+                lead.permission_ref ? (
+                  lead.permission_ref
+                ) : (
+                  <Badge variant="warning" className="gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    Missing
+                  </Badge>
+                )
+              }
+            />
             <Field label="Updated" value={new Date(lead.updated_at).toLocaleString()} />
           </div>
         </Card>

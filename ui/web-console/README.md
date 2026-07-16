@@ -49,4 +49,7 @@ npm run lint       # next lint
 - The app runs in Node server mode; no `output: 'export'` target in v1.
 - API client, types, and TanStack Query hooks live in `lib/api/**`.
 - The `EnvironmentBanner` and top-bar badge reflect live API connectivity.
+- Leads list supports filters, stage funnel, permission-ref warnings, multi-select bulk runs, and live pagination.
+- Lead detail shows module result tabs, per-module run actions, and an expandable audit panel.
+- `/runs/[id]` shows a single pipeline run and links back to its leads.
 - Design tokens are defined in `lib/theme/tokens.ts` and mirrored as CSS custom properties in `app/globals.css`; no one-off colors in pages.
