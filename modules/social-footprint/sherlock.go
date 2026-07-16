@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -93,43 +92,16 @@ func (s *sherlockRunner) run(ctx context.Context, handle string, platforms []str
 			parseErr, tail(stdout.String(), 200),
 		)
 	}
+
+	// TODO: set out.SourceTool = SourceToolSherlock once wrapperOutput carries a
+	// SourceTool field (it currently does not, so we skip this fix).
 	return out, nil
 }
 
-// locateSherlockWrapper finds wrapper/sherlock_check.py using the same
-// search strategy as locateWrapper() in maigret.go.
+// locateSherlockWrapper finds wrapper/sherlock_check.py using the shared
+// wrapper locator from maigret.go.
 func locateSherlockWrapper() (string, error) {
-	if p := os.Getenv(sherlockWrapperEnv); p != "" {
-		if fileExists(p) { // defined in maigret.go
-			return p, nil
-		}
-		return "", fmt.Errorf("%s=%q does not exist", sherlockWrapperEnv, p)
-	}
-
-	var candidates []string
-	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "wrapper", "sherlock_check.py"),
-			filepath.Join(dir, "sherlock_check.py"),
-		)
-	}
-	if wd, err := os.Getwd(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(wd, "wrapper", "sherlock_check.py"),
-			filepath.Join(wd, "..", "wrapper", "sherlock_check.py"),
-			filepath.Join(wd, "..", "..", "wrapper", "sherlock_check.py"),
-		)
-	}
-	for _, c := range candidates {
-		if fileExists(c) {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf(
-		"sherlock wrapper script not found; set %s to the path of wrapper/sherlock_check.py — see README",
-		sherlockWrapperEnv,
-	)
+	return locateWrapperFile(sherlockWrapperEnv, "sherlock_check.py")
 }
 
 // bothRunner implements maigretRunner by running Maigret (primary) then
@@ -146,10 +118,27 @@ type bothRunner struct {
 }
 
 func (b *bothRunner) run(ctx context.Context, handle string, platforms []string, timeout time.Duration) (wrapperOutput, error) {
-	primaryOut, primaryErr := b.primary.run(ctx, handle, platforms, timeout)
+	// Split the total wall-clock budget so the two sequential runs cannot exceed
+	// the caller's deadline: primary gets up to 60% (minimum 5s), secondary gets
+	// the remainder (minimum 5s). Use child contexts so each runner respects its
+	// own slice while still inheriting cancellation from the parent context.
+	primaryTimeout := timeout * 60 / 100
+	if primaryTimeout < 5*time.Second {
+		primaryTimeout = 5 * time.Second
+	}
+	secondaryTimeout := timeout - primaryTimeout
+	if secondaryTimeout < 5*time.Second {
+		secondaryTimeout = 5 * time.Second
+	}
+
+	primaryCtx, primaryCancel := context.WithTimeout(ctx, primaryTimeout)
+	defer primaryCancel()
+	primaryOut, primaryErr := b.primary.run(primaryCtx, handle, platforms, primaryTimeout)
 	if primaryErr != nil {
-		// Primary failed: fall back to Sherlock alone.
-		return b.secondary.run(ctx, handle, sherlockCuratedPlatforms, timeout)
+		// Primary failed: fall back to Sherlock alone with the caller's platform list.
+		secondaryCtx, secondaryCancel := context.WithTimeout(ctx, secondaryTimeout)
+		defer secondaryCancel()
+		return b.secondary.run(secondaryCtx, handle, platforms, secondaryTimeout)
 	}
 
 	// Index primary results for O(1) lookup.
@@ -162,7 +151,9 @@ func (b *bothRunner) run(ctx context.Context, handle string, platforms []string,
 	copy(merged, primaryOut.Results)
 
 	// Run Sherlock with its own curated platform list.
-	secondaryOut, secondaryErr := b.secondary.run(ctx, handle, sherlockCuratedPlatforms, timeout)
+	secondaryCtx, secondaryCancel := context.WithTimeout(ctx, secondaryTimeout)
+	defer secondaryCancel()
+	secondaryOut, secondaryErr := b.secondary.run(secondaryCtx, handle, sherlockCuratedPlatforms, secondaryTimeout)
 	if secondaryErr == nil {
 		for _, sr := range secondaryOut.Results {
 			definitive := sr.Status == "claimed" || sr.Status == "available"

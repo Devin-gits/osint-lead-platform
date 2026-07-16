@@ -102,9 +102,12 @@ def main(argv=None):
 
     # --- Run Sherlock (synchronous, thread-pool internally) ---
     try:
-        query_notify = QueryNotifyPrint(
-            result=None, verbose=False, print_all=False, browse=False
-        )
+        query_notify = QueryNotifyPrint(None, False, False, False)
+    except Exception as e:
+        emit(build_output(args.username, list(site_data.keys()), [], version,
+                          error="QueryNotifyPrint init failed: %s" % e), 3)
+
+    try:
         raw = sherlock(
             username=args.username,
             site_data=site_data,

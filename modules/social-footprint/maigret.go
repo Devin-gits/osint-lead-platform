@@ -76,7 +76,7 @@ func (s *subprocessRunner) run(ctx context.Context, handle string, platforms []s
 		return wrapperOutput{}, fmt.Errorf("python interpreter %q not found; install Python 3.10+ or set %s — see README", python, pythonEnv)
 	}
 
-	wrapper, err := locateWrapper()
+	wrapper, err := locateWrapperFile(wrapperEnv, "maigret_check.py")
 	if err != nil {
 		return wrapperOutput{}, err
 	}
@@ -121,31 +121,31 @@ func (s *subprocessRunner) run(ctx context.Context, handle string, platforms []s
 	return out, nil
 }
 
-// locateWrapper finds maigret_check.py. Order: explicit env override, then
-// alongside the running binary (wrapper/maigret_check.py and ./maigret_check.py),
-// then relative to this source file's directory (covers `go test`/`go run` where
-// the binary lives in a temp dir).
-func locateWrapper() (string, error) {
-	if p := os.Getenv(wrapperEnv); p != "" {
+// locateWrapperFile finds a wrapper script by filename. Order: explicit env
+// override (envKey), then alongside the running binary (wrapper/<filename> and
+// ./<filename>), then relative to the current working directory (covers
+// `go test`/`go run` where the binary lives in a temp dir).
+func locateWrapperFile(envKey, filename string) (string, error) {
+	if p := os.Getenv(envKey); p != "" {
 		if fileExists(p) {
 			return p, nil
 		}
-		return "", fmt.Errorf("%s=%q does not exist", wrapperEnv, p)
+		return "", fmt.Errorf("%s=%q does not exist", envKey, p)
 	}
 
 	var candidates []string
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates,
-			filepath.Join(dir, "wrapper", "maigret_check.py"),
-			filepath.Join(dir, "maigret_check.py"),
+			filepath.Join(dir, "wrapper", filename),
+			filepath.Join(dir, filename),
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(wd, "wrapper", "maigret_check.py"),
-			filepath.Join(wd, "..", "wrapper", "maigret_check.py"),
-			filepath.Join(wd, "..", "..", "wrapper", "maigret_check.py"),
+			filepath.Join(wd, "wrapper", filename),
+			filepath.Join(wd, "..", "wrapper", filename),
+			filepath.Join(wd, "..", "..", "wrapper", filename),
 		)
 	}
 	for _, c := range candidates {
@@ -153,7 +153,7 @@ func locateWrapper() (string, error) {
 			return c, nil
 		}
 	}
-	return "", fmt.Errorf("maigret wrapper script not found; set %s to the path of wrapper/maigret_check.py — see README", wrapperEnv)
+	return "", fmt.Errorf("wrapper script %q not found; set %s to its path — see README", filename, envKey)
 }
 
 func parseWrapperOutput(s string) (wrapperOutput, error) {

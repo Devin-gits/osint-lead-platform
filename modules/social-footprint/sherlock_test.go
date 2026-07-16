@@ -90,6 +90,9 @@ func TestBothRunner_DoesNotDowngradeDefinitive(t *testing.T) {
 // TestNewValidatorWithBackend_SherlockMode verifies sherlockRunner is wired when
 // explicitly requested via constructor argument.
 func TestNewValidatorWithBackend_SherlockMode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live runner instantiation in short mode")
+	}
 	v := NewValidatorWithBackend(time.Second, 0, BackendSherlock)
 	if _, ok := v.runner.(*sherlockRunner); !ok {
 		t.Errorf("runner type = %T, want *sherlockRunner", v.runner)
@@ -115,6 +118,9 @@ func TestNewValidatorWithBackend_DefaultIsMaigret(t *testing.T) {
 // TestNewValidatorWithBackend_EnvOverride verifies SOCIAL_FOOTPRINT_BACKEND env
 // var overrides the constructor argument.
 func TestNewValidatorWithBackend_EnvOverride(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live runner instantiation in short mode")
+	}
 	t.Setenv("SOCIAL_FOOTPRINT_BACKEND", "sherlock")
 	v := NewValidatorWithBackend(time.Second, 0, BackendMaigret) // arg says maigret
 	if _, ok := v.runner.(*sherlockRunner); !ok {

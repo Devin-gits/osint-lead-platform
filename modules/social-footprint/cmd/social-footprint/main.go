@@ -64,7 +64,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer) error {
 		lead = map[string]interface{}{}
 	}
 
-	validator := socialfootprint.NewValidatorWithBackend(durationFromEnv(timeoutEnv), durationFromEnv(minIntervalEnv), "")
+	validator := socialfootprint.NewValidatorWithBackend(durationFromEnv(timeoutEnv), durationFromEnv(minIntervalEnv), socialfootprint.BackendMaigret)
 	result, audits := validator.Check(lead)
 
 	// Audit first — one line per handle checked — so a call is logged even if
