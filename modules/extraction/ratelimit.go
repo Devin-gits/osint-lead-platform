@@ -66,6 +66,11 @@ func (r *rateLimiter) wait() {
 func (r *rateLimiter) backoff() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// If the limiter is effectively disabled (minInterval == 0), backoff is a
+	// no-op. Otherwise double the current effective interval up to maxInterval.
+	if r.current == 0 {
+		return
+	}
 	r.current *= 2
 	if r.maxInterval > 0 && r.current > r.maxInterval {
 		r.current = r.maxInterval

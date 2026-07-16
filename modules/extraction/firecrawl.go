@@ -23,7 +23,6 @@ var defaultFirecrawlBaseURL = "https://api.firecrawl.dev/v1"
 type firecrawlRunner struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
 }
 
 func newFirecrawlRunner() *firecrawlRunner {
@@ -34,7 +33,6 @@ func newFirecrawlRunner() *firecrawlRunner {
 	return &firecrawlRunner{
 		apiKey:  os.Getenv(firecrawlAPIKeyEnv),
 		baseURL: strings.TrimRight(base, "/"),
-		client:  &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
@@ -86,7 +84,12 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 	req.Header.Set("Authorization", "Bearer "+f.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := f.client.Do(req)
+	httpTimeout := timeout
+	if httpTimeout <= 0 {
+		httpTimeout = DefaultTimeout
+	}
+	client := &http.Client{Timeout: httpTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Result{
 			Status:    "error",

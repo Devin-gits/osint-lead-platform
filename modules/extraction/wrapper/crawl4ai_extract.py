@@ -13,6 +13,7 @@ Behavior:
   5. Exit 0 even on internal errors so the Go runner can parse the JSON.
 """
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -318,6 +319,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import asyncio  # noqa: E402
-
     main()

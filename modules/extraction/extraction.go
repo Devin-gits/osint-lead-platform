@@ -62,14 +62,15 @@ type Input struct {
 	Schema  map[string]interface{} `json:"schema,omitempty"`
 }
 
-// Fields holds the normalized, structured extraction output.
+// Fields holds the normalized, structured extraction output. Slice fields keep
+// empty arrays (not omitted) so downstream consumers can rely on stable keys.
 type Fields struct {
 	CompanyName  string   `json:"company_name,omitempty"`
-	Emails       []string `json:"emails,omitempty"`
-	Phones       []string `json:"phones,omitempty"`
-	Addresses    []string `json:"addresses,omitempty"`
-	SocialLinks  []string `json:"social_links,omitempty"`
-	ContactURLs  []string `json:"contact_urls,omitempty"`
+	Emails       []string `json:"emails"`
+	Phones       []string `json:"phones"`
+	Addresses    []string `json:"addresses"`
+	SocialLinks  []string `json:"social_links"`
+	ContactURLs  []string `json:"contact_urls"`
 	Description  string   `json:"description,omitempty"`
 	Title        string   `json:"title,omitempty"`
 }
