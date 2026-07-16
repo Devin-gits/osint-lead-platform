@@ -1,0 +1,163 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/registry"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/runner"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
+)
+
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	st := store.NewMemoryStore()
+	r := runner.New(st, 0)
+	reg := registry.New()
+	return NewServer(st, r, reg)
+}
+
+func TestServer_CreateAndGetLead(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	body := []byte(`{"email":"support@github.com","company":"GitHub"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	lead, ok := createResp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected object data")
+	}
+	id, _ := lead["id"].(string)
+	if id == "" {
+		t.Fatalf("expected lead id")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id, nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestServer_RunModules(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	// Create lead.
+	body := []byte(`{"email":"support@github.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	lead := createResp.Data.(map[string]any)
+	id := lead["id"].(string)
+
+	// Run email-validate.
+	body = []byte(`{"modules":["email-validate"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/run", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var runResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &runResp); err != nil {
+		t.Fatalf("decode run response: %v", err)
+	}
+	updated := runResp.Data.(map[string]any)
+	results := updated["results"].(map[string]any)
+	ev := results["email_validate"].(map[string]any)
+	if ev["status"] != "ok" {
+		t.Fatalf("expected email status ok, got %v", ev["status"])
+	}
+}
+
+func TestServer_ListModules(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/modules", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	mods, ok := resp.Data.([]any)
+	if !ok || len(mods) == 0 {
+		t.Fatalf("expected modules list")
+	}
+}
+
+func TestServer_CORS(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/leads", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+		t.Fatalf("expected CORS origin, got %s", got)
+	}
+}
+
+func TestServer_PipelineRun(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	// Create lead.
+	body := []byte(`{"email":"support@github.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	lead := createResp.Data.(map[string]any)
+	id := lead["id"].(string)
+
+	body = []byte(`{"lead_ids":["` + id + `"],"modules":["email-validate"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/pipelines/run", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// Ensure unused imports are actually used.
+var _ = context.Background
+var _ = util.NewID
+var _ = models.StageRaw
