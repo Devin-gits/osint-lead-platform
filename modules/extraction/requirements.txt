@@ -1,0 +1,11 @@
+# Python dependencies for the extraction module's Crawl4AI wrapper.
+# Install into the Python environment the Go module will invoke:
+#   pip install -r requirements.txt
+#
+# Crawl4AI is Apache-2.0 licensed with an attribution clause. It is invoked
+# ONLY as a subprocess CLI from wrapper/crawl4ai_extract.py; no Crawl4AI source
+# is imported into the MIT-licensed Go module.
+#
+# The wrapper was written against Crawl4AI 0.9.2 (stable) and uses only the
+# AsyncWebCrawler / arun API with LLM-free extraction.
+crawl4ai==0.9.2

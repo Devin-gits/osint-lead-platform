@@ -1,0 +1,20 @@
+name: extraction CI
+on:
+  push:
+    paths:
+      - 'modules/extraction/**'
+      - '.github/workflows/extraction-ci.yml'
+  pull_request:
+    paths:
+      - 'modules/extraction/**'
+      - '.github/workflows/extraction-ci.yml'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.5'
+      - run: cd modules/extraction && go test ./...
+      - run: cd modules/extraction && go build ./...
