@@ -27,7 +27,7 @@ import (
 	"os"
 	"time"
 
-	domainintel "github.com/Shinydev09/osint-lead-platform/modules/domain-intel"
+	domainintel "github.com/Moyeil-73/osint-lead-platform/modules/domain-intel"
 )
 
 // resultKey is the namespaced key added to the lead record. Kept in one place
