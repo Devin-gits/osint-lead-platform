@@ -3,7 +3,7 @@
 // least an "email" field, it produces the Validate-stage "is this a real,
 // active person?" signal defined in docs/architecture.md, adding a namespaced
 // "social_footprint" key with per-handle, per-platform claimed/unclaimed
-// signals from Maigret.
+// signals from Maigret and/or Sherlock.
 //
 // Integration shape. Maigret is a Python tool; the prior modules are Go. Per the
 // Stage 1 decision (docs/decisions/stage-1-decision.md -> social-footprint) and
@@ -25,14 +25,17 @@
 //
 // Compliance guardrails (enforced in code, not just docs), per the decision doc
 // and docs/compliance.md's "Social footprint = Medium" row:
-//   - Scope cap: only a curated allow-list of ~15 major platforms is checked,
-//     never Maigret's 3000+ site default (see curatedPlatforms and the wrapper).
+//   - Backend selector: SOCIAL_FOOTPRINT_BACKEND chooses Maigret (default),
+//     Sherlock, or consensus merge. Each backend uses its own curated allow-list.
+//   - Scope cap: only a curated allow-list of major platforms is checked,
+//     never Maigret's 3000+ site default or Sherlock's 400+ site default
+//     (see curatedPlatforms, sherlockCuratedPlatforms, and the wrappers).
 //   - Handle cap: at most MaxHandles candidates are checked per lead, bounding
 //     fan-out.
 //   - Rate limit: an in-process limiter (see ratelimit.go) enforces a minimum
-//     delay between per-lead invocations when Check is called in a loop.
+//     delay between consecutive per-lead invocations when Check is called in a loop.
 //   - Minimal collection: only match/no-match + URL is captured, never scraped
-//     profile fields (bio/location/linked accounts) — the wrapper disables
+//     profile fields (bio/location/linked accounts) — the wrappers disable
 //     parsing and recursion.
 package socialfootprint
 
@@ -122,7 +125,7 @@ type SocialFootprintResult struct {
 	HandlesChecked []string       `json:"handles_checked"`  // the handle strings actually checked
 	Handles        []HandleResult `json:"handles,omitempty"`
 	ActiveSignals  int            `json:"active_signals"` // total "claimed" hits across all handles
-	Confidence     float64        `json:"confidence"`   // 0.0-1.0 ratio of claimed hits to max possible
+	Confidence     float64        `json:"confidence"`     // 0.0-1.0 ratio of claimed hits to the active backend's primary platform count
 	Metadata       map[string]any `json:"metadata"`       // config/runtime facts for reviewers
 	CheckedAt      string         `json:"checked_at"`
 	SourceTool     string         `json:"source_tool"`
@@ -145,9 +148,11 @@ type AuditRecord struct {
 // to reuse across leads; reuse is in fact how the in-process rate limiter spaces
 // out consecutive per-lead calls.
 type Validator struct {
-	timeout time.Duration
-	limiter *rateLimiter
-	runner  maigretRunner // pluggable so tests can inject a fake instead of Python
+	timeout   time.Duration
+	limiter   *rateLimiter
+	runner    maigretRunner // pluggable so tests can inject a fake instead of Python
+	backend   string        // active backend: BackendMaigret, BackendSherlock, or BackendBoth
+	platforms []string      // platform allow-list passed to runner.run() for this backend
 }
 
 // NewValidator builds a Validator with the default (Maigret) backend.
@@ -174,32 +179,56 @@ func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string)
 	}
 
 	var runner maigretRunner
+	var platforms []string
 	switch backend {
 	case BackendSherlock:
 		runner = &sherlockRunner{}
+		platforms = sherlockCuratedPlatforms
 	case BackendBoth:
 		runner = &bothRunner{
 			primary:   &subprocessRunner{},
 			secondary: &sherlockRunner{},
 		}
+		platforms = curatedPlatforms
 	default: // BackendMaigret and unknown values
+		backend = BackendMaigret
 		runner = &subprocessRunner{}
+		platforms = curatedPlatforms
 	}
 
 	return &Validator{
-		timeout: timeout,
-		limiter: newRateLimiter(minInterval),
-		runner:  runner,
+		timeout:   timeout,
+		limiter:   newRateLimiter(minInterval),
+		runner:    runner,
+		backend:   backend,
+		platforms: platforms,
+	}
+}
+
+// sourceTool returns the engine identifier surfaced in results, handle blocks,
+// and audit records. It agrees with the active backend so every visible surface
+// reports which engine actually ran.
+func (v *Validator) sourceTool() string {
+	switch v.backend {
+	case BackendSherlock:
+		return SourceToolSherlock
+	case BackendBoth:
+		return SourceTool + " + " + SourceToolSherlock + " consensus"
+	default:
+		return SourceTool
 	}
 }
 
 // rateLimitNote is the compliance-relevant note embedded in every result,
 // documenting the scope/rate discipline this module enforces.
 func (v *Validator) rateLimitNote() string {
+	scopeNote := "curated " + strconv.Itoa(len(v.platforms)) + "-platform allow-list"
+	if v.backend == BackendBoth {
+		scopeNote = "Maigret " + scopeNote + " + Sherlock " + strconv.Itoa(len(sherlockCuratedPlatforms)) + "-platform allow-list"
+	}
 	return "per-lead rate-limited spot check (min " + v.limiter.interval().String() +
-		" between leads, exponential backoff on consecutive errors); scope hard-capped to a curated " +
-		strconv.Itoa(len(curatedPlatforms)) + "-platform allow-list and " +
-		strconv.Itoa(MaxHandles) + " handle candidates; recursion, profile scraping, and " +
+		" between leads, exponential backoff on consecutive errors); scope hard-capped to a " + scopeNote +
+		" and " + strconv.Itoa(MaxHandles) + " handle candidates; recursion, profile scraping, and " +
 		"proxy/Cloudflare block-evasion disabled; " + LegalBasis
 }
 
@@ -207,11 +236,16 @@ func (v *Validator) rateLimitNote() string {
 // theoretical maximum for this call. It is intentionally conservative: even one
 // hit on a curated public platform is a meaningful signal, but a saturated
 // profile (claimed on many platforms) is a stronger one.
+//
+// The denominator uses v.platforms so it matches the active backend's primary
+// coverage. In BackendBoth mode we deliberately keep Maigret's curated list as
+// the denominator — a conservative choice that avoids double-counting the
+// overlapping Sherlock coverage.
 func (v *Validator) confidence(handleCount, claimed int) float64 {
 	if handleCount == 0 {
 		return 0
 	}
-	max := handleCount * len(curatedPlatforms)
+	max := handleCount * len(v.platforms)
 	if max == 0 {
 		return 0
 	}
@@ -221,18 +255,22 @@ func (v *Validator) confidence(handleCount, claimed int) float64 {
 // metadata returns runtime/config facts for reviewers: scope, rate-limit base,
 // and legal basis. It is a stable snapshot per call and never includes PII.
 func (v *Validator) metadata() map[string]any {
-	return map[string]any{
-		"source_tool":        SourceTool,
+	m := map[string]any{
+		"source_tool":        v.sourceTool(),
 		"legal_basis":        LegalBasis,
 		"max_handles":        MaxHandles,
-		"platform_count":     len(curatedPlatforms),
+		"platform_count":     len(v.platforms),
 		"rate_limit_base":    v.limiter.minInterval.String(),
 		"rate_limit_current": v.limiter.interval().String(),
 	}
+	if v.backend == BackendBoth {
+		m["sherlock_platform_count"] = len(sherlockCuratedPlatforms)
+	}
+	return m
 }
 
 // Check derives candidate handles from the lead, runs a rate-limited, scope-
-// capped Maigret spot check for each, and returns the combined SocialFootprintResult
+// capped spot check for each, and returns the combined SocialFootprintResult
 // plus one AuditRecord per handle checked (or a single record for a skip). It never
 // returns an error: every failure is reported in-band so the pipeline stays
 // alive.
@@ -252,11 +290,11 @@ func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, [
 			Confidence:     0,
 			Metadata:       v.metadata(),
 			CheckedAt:      now.Format(time.RFC3339),
-			SourceTool:     SourceTool,
+			SourceTool:     v.sourceTool(),
 			RateLimitNote:  v.rateLimitNote(),
 		}
 		audit := AuditRecord{
-			Tool:       SourceTool,
+			Tool:       v.sourceTool(),
 			CheckedAt:  now.Format(time.RFC3339),
 			Handle:     "",
 			Status:     statusSkipped,
@@ -276,7 +314,7 @@ func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, [
 		Handles:        make([]HandleResult, 0, len(candidates)),
 		Metadata:       v.metadata(),
 		CheckedAt:      now.Format(time.RFC3339),
-		SourceTool:     SourceTool,
+		SourceTool:     v.sourceTool(),
 		RateLimitNote:  v.rateLimitNote(),
 	}
 	audits := make([]AuditRecord, 0, len(candidates))
@@ -291,7 +329,7 @@ func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, [
 			hadError = true
 		}
 		audits = append(audits, AuditRecord{
-			Tool:       SourceTool,
+			Tool:       v.sourceTool(),
 			CheckedAt:  now.Format(time.RFC3339),
 			Handle:     c.handle,
 			Status:     hr.Status,
@@ -308,7 +346,7 @@ func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, [
 	return res, audits
 }
 
-// checkHandle runs one Maigret spot check for a single handle over the curated
+// checkHandle runs one backend spot check for a single handle over the curated
 // platform allow-list, wrapped with a per-handle timeout and a panic-recover so a
 // single handle failure degrades to "unknown" instead of taking down the call.
 func (v *Validator) checkHandle(c handleCandidate, now time.Time) (hr HandleResult) {
@@ -318,26 +356,26 @@ func (v *Validator) checkHandle(c handleCandidate, now time.Time) (hr HandleResu
 		Status:     statusUnknown,
 		Platforms:  []PlatformSignal{},
 		CheckedAt:  now.Format(time.RFC3339),
-		SourceTool: SourceTool,
+		SourceTool: v.sourceTool(),
 	}
 	defer func() {
 		if r := recover(); r != nil {
 			hr.Status = statusUnknown
-			hr.Error = "recovered from panic in maigret runner: " + toString(r)
+			hr.Error = "recovered from panic in runner: " + toString(r)
 		}
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), v.timeout)
 	defer cancel()
 
-	out, err := v.runner.run(ctx, c.handle, curatedPlatforms, v.timeout)
+	out, err := v.runner.run(ctx, c.handle, v.platforms, v.timeout)
 	if err != nil {
 		hr.Error = err.Error()
 		v.limiter.backoff()
 		return hr
 	}
 	if out.Error != "" {
-		hr.Error = "maigret wrapper: " + out.Error
+		hr.Error = v.backend + " wrapper: " + out.Error
 		// Fall through: partial results (if any) are still surfaced below.
 	}
 	for _, r := range out.Results {

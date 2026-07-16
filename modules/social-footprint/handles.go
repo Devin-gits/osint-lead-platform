@@ -13,6 +13,7 @@ type handleCandidate struct {
 
 // origin labels — how a candidate handle was derived.
 const (
+	originDirect       = "direct"
 	originEmailLocal   = "email-local-part"
 	originEmailVariant = "email-variant"
 	originDomainIntel  = "domain-intel-harvester"
@@ -38,6 +39,12 @@ func deriveHandles(lead map[string]interface{}) []handleCandidate {
 		}
 		seen[h] = true
 		out = append(out, handleCandidate{handle: h, origin: origin})
+	}
+
+	// Optional direct username/handle from a CLI flag or orchestrator; takes
+	// precedence over email-derived candidates because it is explicitly supplied.
+	if handle, _ := lead["username"].(string); handle != "" {
+		add(handle, originDirect)
 	}
 
 	// Primary: the email local-part and 2-3 sane variants.
