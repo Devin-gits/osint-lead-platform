@@ -35,8 +35,12 @@ export default function LeadDetailPage() {
   const handleRun = async (module: ModuleName) => {
     setRunning(module);
     try {
-      await run.mutateAsync({ id, body: { modules: [module] } });
-      addToast(`${module} completed`, "success");
+      const updated = await run.mutateAsync({ id, body: { modules: [module] } });
+      const resultKey = module.replace(/-/g, "_");
+      const result = ((updated as unknown) as Record<string, unknown>)[resultKey] as { status?: string } | undefined;
+      const status = result?.status || "unknown";
+      const variant = status === "ok" ? "success" : status === "skipped" ? "warning" : "danger";
+      addToast(`${module} finished with status: ${status}`, variant);
       refetch();
     } catch (err) {
       addToast(

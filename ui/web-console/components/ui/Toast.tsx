@@ -1,10 +1,11 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils/cn";
 import { X } from "lucide-react";
 
 export interface ToastProps {
-  message: string;
+  message: ReactNode;
   visible?: boolean;
   variant?: "info" | "success" | "warning" | "danger";
   onClose?: () => void;

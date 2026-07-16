@@ -1,25 +1,25 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { Toast } from "@/components/ui/Toast";
 
 type ToastVariant = "info" | "success" | "warning" | "danger";
 
 interface ToastItem {
   id: string;
-  message: string;
+  message: ReactNode;
   variant: ToastVariant;
 }
 
 interface ToastContextValue {
   toasts: ToastItem[];
-  addToast: (message: string, variant?: ToastVariant) => void;
+  addToast: (message: ReactNode, variant?: ToastVariant) => void;
   removeToast: (id: string) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const removeToast = useCallback((id: string) => {
@@ -27,7 +27,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addToast = useCallback(
-    (message: string, variant: ToastVariant = "info") => {
+    (message: ReactNode, variant: ToastVariant = "info") => {
       const id = Math.random().toString(36).slice(2);
       setToasts((prev) => [...prev, { id, message, variant }]);
       setTimeout(() => removeToast(id), 4000);

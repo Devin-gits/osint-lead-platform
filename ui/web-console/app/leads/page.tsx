@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search, Users, AlertTriangle, X } from "lucide-react";
 import { useLeads, useCreateLead, useModules, useRunPipeline } from "@/lib/api/hooks";
@@ -133,12 +134,17 @@ export default function LeadsPage() {
       };
       const res = await pipeline.mutateAsync(body);
       addToast(
-        `Pipeline started for ${selected.size} lead(s).`,
+        <span>
+          Pipeline started for {selected.size} lead(s).{" "}
+          <Link
+            href={`/runs/${res.run_id}`}
+            className="underline hover:no-underline"
+          >
+            View run {res.run_id.slice(0, 8)}…
+          </Link>
+        </span>,
         "success"
       );
-      setTimeout(() => {
-        router.push(`/runs/${res.run_id}`);
-      }, 400);
       clearSelection();
     } catch (err) {
       addToast(

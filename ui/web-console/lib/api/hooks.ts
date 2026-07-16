@@ -129,9 +129,9 @@ export type CreateLeadInput = Partial<LeadRecord>;
 
 export function useCreateLead() {
   const queryClient = useQueryClient();
-  return useMutation<LeadRecord, ApiClientError, CreateLeadInput>({
+  return useMutation<LeadSummary, ApiClientError, CreateLeadInput>({
     mutationFn: async (payload) => {
-      const res = await apiPost<LeadRecord>("/api/leads", payload);
+      const res = await apiPost<LeadSummary>("/api/leads", payload);
       return res.data;
     },
     onSuccess: () => {
