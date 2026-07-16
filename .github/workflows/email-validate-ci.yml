@@ -1,5 +1,13 @@
 name: email-validate CI
-on: [push, pull_request]
+on:
+  push:
+    paths:
+      - 'modules/email-validate/**'
+      - '.github/workflows/email-validate-ci.yml'
+  pull_request:
+    paths:
+      - 'modules/email-validate/**'
+      - '.github/workflows/email-validate-ci.yml'
 jobs:
   test:
     runs-on: ubuntu-latest
