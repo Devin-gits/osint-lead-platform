@@ -74,7 +74,8 @@ Widening scope requires code change + compliance re-review.
 | `confidence` | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (rounded to 3 decimals) |
 | `metadata` | non-PII runtime/config snapshot: `source_tool`, `legal_basis`, `max_handles`, `platform_count`, `rate_limit_base`, `rate_limit_current` |
 | `rate_limit_note` | compliance text embedded in every result |
-| `source_tool`, `checked_at` | |
+| `source_tool`, `checked_at` | backend-dependent: Maigret / Sherlock / both / Osintgram |
+| `instagram` | (Osintgram backend only) minimal enrichment on the Instagram `PlatformSignal` — counts and boolean flags; no bio/contact strings |
 
 ## CLI
 
@@ -102,9 +103,15 @@ When run from a terminal (no pipe on `stdin`), an empty/missing `stdin` is allow
 | Env | Default | Meaning |
 |-----|---------|---------|
 | `SOCIAL_FOOTPRINT_TIMEOUT` | `90s` | Per-handle subprocess bound |
-| `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` | Rate limiter spacing |
+| `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` (`15s` for `osintgram` if unset) | Rate limiter spacing |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` | Interpreter |
 | `SOCIAL_FOOTPRINT_WRAPPER` | auto-locate | Path to maigret_check.py |
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | `maigret`, `sherlock`, `both`, or `osintgram` |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_HOME` | *(none)* | Path to separate Osintgram checkout with `main.py` |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_WRAPPER` | auto-locate | Path to `wrapper/osintgram_check.py` |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_PYTHON` | `python3` / `SOCIAL_FOOTPRINT_PYTHON` | Interpreter for Osintgram wrapper |
+| `HIKERAPI_TOKEN` | *(none)* | Optional HikerAPI token for headless Osintgram runs |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_CREDENTIALS` | *(none)* | Optional path to `credentials.ini`; otherwise Osintgram reads `config/credentials.ini` in `OSINTGRAM_HOME` |
 
 ## Tests
 
@@ -114,6 +121,30 @@ cd modules/social-footprint && go test ./...
 
 Offline with fake runner; handles/ratelimit unit tests; CLI uses fake wrapper script.
 
+The Osintgram wrapper is exercised with a fake `main.py` fixture: command allowlist,
+missing home, not-found exit, and a synthetic `*_info.json` parse path. Real
+Instagram checks are skipped under `-short` and behind
+`SOCIAL_FOOTPRINT_LIVE_OSINTGRAM=1`.
+
+## Osintgram backend (optional Instagram depth)
+
+`SOCIAL_FOOTPRINT_BACKEND=osintgram` enables a single-platform Instagram check via
+[Datalux/Osintgram](https://github.com/Datalux/Osintgram), invoked through
+`wrapper/osintgram_check.py` as a subprocess CLI.
+
+- **GPL firewall:** the wrapper is MIT platform code; it never imports Osintgram
+  source. Osintgram must be installed separately and pointed to with
+  `SOCIAL_FOOTPRINT_OSINTGRAM_HOME`.
+- **Command allowlist:** only `info` is permitted; the wrapper rejects
+  `followers`, `fwersemail`, `photos`, `addrs`, etc.
+- **Minimal collection:** the wrapper normalizes Osintgram's `info` JSON to
+  counts and boolean flags only. Biography text, full contact strings, HD images,
+  GPS/addresses, and follower/following graphs are dropped.
+- **Rate limit:** default `SOCIAL_FOOTPRINT_MIN_INTERVAL` is `15s` for this backend
+  when the env var is unset.
+- **Audit:** stderr JSON lines contain only the handle and `source_tool`; tokens,
+  credentials, and Instagram contact data are never logged.
+
 ## Do not
 
 - Run Maigret's full 3000+ site DB
@@ -121,3 +152,5 @@ Offline with fake runner; handles/ratelimit unit tests; CLI uses fake wrapper sc
 - Scrape profile bios/locations
 - Put raw email on audit lines
 - Treat as first-touch validator without a handle source
+- Import or vendor Osintgram GPL source into platform code
+- Enable Osintgram commands other than `info`

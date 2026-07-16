@@ -8,5 +8,10 @@
 # (see evaluations/maigret.md and docs/decisions/stage-1-decision.md).
 # sherlock-project==0.16.1 is pinned to the version verified by the new
 # wrapper and tests added in this PR (Stage 2 implementation).
+#
+# Osintgram is GPL-3.0 and is intentionally NOT listed here as a pip dependency
+# of the MIT platform. It must be installed separately by the operator and
+# pointed to via SOCIAL_FOOTPRINT_OSINTGRAM_HOME. The wrapper at
+# wrapper/osintgram_check.py shells out to Osintgram's CLI only.
 maigret==0.6.2
 sherlock-project==0.16.1

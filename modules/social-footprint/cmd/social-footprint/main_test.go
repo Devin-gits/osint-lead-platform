@@ -198,6 +198,95 @@ func TestRun_FlagsOverrideStdin(t *testing.T) {
 	}
 }
 
+// TestRun_OsintgramBackend verifies the CLI path for the optional Osintgram
+// backend: the lead record is preserved, the Instagram result is emitted, and the
+// audit line carries only the handle (no raw email).
+func TestRun_OsintgramBackend(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "fake_osintgram_wrapper.py")
+	script := `import sys, json
+print(json.dumps({
+    "tool": "osintgram",
+    "version": "fake",
+    "username": "natgeo",
+    "sites_requested": ["Instagram"],
+    "results": [{
+        "platform": "Instagram",
+        "status": "claimed",
+        "url": "https://www.instagram.com/natgeo/",
+        "http_status": 200,
+        "instagram": {
+            "user_id": "123",
+            "is_private": False,
+            "is_verified": True,
+            "is_business": True,
+            "follower_count": 100,
+            "following_count": 10,
+            "media_count": 50,
+            "has_public_email": False,
+            "checked_via": "osintgram-cli"
+        }
+    }],
+    "checked_at": "2026-07-16T12:00:00Z",
+    "error": "",
+}))
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	home := filepath.Join(dir, "osintgram")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "main.py"), []byte("# placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("SOCIAL_FOOTPRINT_BACKEND", "osintgram")
+	t.Setenv("SOCIAL_FOOTPRINT_OSINTGRAM_WRAPPER", wrapper)
+	t.Setenv("SOCIAL_FOOTPRINT_OSINTGRAM_HOME", home)
+	t.Setenv("SOCIAL_FOOTPRINT_MIN_INTERVAL", "0")
+
+	in := strings.NewReader(`{"email":"natgeo@example.com","company":"Demo"}`)
+	var out, errb bytes.Buffer
+	if err := run(in, &out, &errb); err != nil {
+		t.Fatalf("run returned error: %v\nstderr: %s", err, errb.String())
+	}
+
+	var lead map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &lead); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, out.String())
+	}
+	if lead["email"] != "natgeo@example.com" || lead["company"] != "Demo" {
+		t.Errorf("raw fields not preserved: %+v", lead)
+	}
+	sf := lead[resultKey].(map[string]interface{})
+	if sf["status"] != "ok" {
+		t.Errorf("status = %v, want ok\n%s", sf["status"], out.String())
+	}
+	if sf["active_signals"].(float64) != 1 {
+		t.Errorf("active_signals = %v, want 1", sf["active_signals"])
+	}
+	for _, ln := range nonEmptyLines(errb.String()) {
+		var a map[string]interface{}
+		if err := json.Unmarshal([]byte(ln), &a); err != nil {
+			t.Errorf("audit line not JSON: %v (%q)", err, ln)
+			continue
+		}
+		if a["handle"] == "natgeo@example.com" {
+			t.Errorf("audit leaked raw email; want handle only, got %v", a["handle"])
+		}
+		if a["legal_basis"] == "" || a["legal_basis"] == nil {
+			t.Errorf("audit missing legal_basis: %v", a)
+		}
+	}
+}
+
 // fakeWrapperPath writes a tiny Python script that implements the wrapper JSON
 // contract and returns its path. Tests can point SOCIAL_FOOTPRINT_WRAPPER at it
 // to exercise the subprocess path without a real Maigret install.
