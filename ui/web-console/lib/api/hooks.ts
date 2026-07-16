@@ -103,6 +103,18 @@ export function useRuns(params: { page?: number; page_size?: number } = {}) {
   });
 }
 
+export function useRun(id?: string) {
+  return useQuery<PipelineRun>({
+    queryKey: [RUNS_KEY, id],
+    queryFn: async () => {
+      if (!id) throw new ApiClientError("missing_id", "No run id provided", 400);
+      const res = await apiGet<PipelineRun>(`/api/runs/${id}`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+}
+
 export function useComplianceSummary() {
   return useQuery<ComplianceSummary>({
     queryKey: [COMPLIANCE_KEY],
@@ -117,9 +129,9 @@ export type CreateLeadInput = Partial<LeadRecord>;
 
 export function useCreateLead() {
   const queryClient = useQueryClient();
-  return useMutation<LeadRecord, ApiClientError, CreateLeadInput>({
+  return useMutation<LeadSummary, ApiClientError, CreateLeadInput>({
     mutationFn: async (payload) => {
-      const res = await apiPost<LeadRecord>("/api/leads", payload);
+      const res = await apiPost<LeadSummary>("/api/leads", payload);
       return res.data;
     },
     onSuccess: () => {

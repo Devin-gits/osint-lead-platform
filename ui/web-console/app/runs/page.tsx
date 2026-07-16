@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
 import { useRuns } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/Table";
 
 export default function RunsPage() {
+  const router = useRouter();
   const { data, isLoading, error } = useRuns({ page_size: 50 });
 
   return (
@@ -53,7 +55,11 @@ export default function RunsPage() {
             </TableHead>
             <TableBody>
               {data?.data.map((run) => (
-                <TableRow key={run.id}>
+                <TableRow
+                  key={run.id}
+                  onClick={() => router.push(`/runs/${run.id}`)}
+                  className="cursor-pointer"
+                >
                   <TableCell className="capitalize">{run.type}</TableCell>
                   <TableCell>
                     <Badge variant={variantForStatus(run.status)}>{run.status}</Badge>

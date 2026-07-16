@@ -1,0 +1,25 @@
+name: web-console CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ui/web-console/**'
+      - '.github/workflows/ui.yml'
+  pull_request:
+    paths:
+      - 'ui/web-console/**'
+      - '.github/workflows/ui.yml'
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'ui/web-console/package-lock.json'
+      - run: cd ui/web-console && npm ci
+      - run: cd ui/web-console && npm run typecheck
+      - run: cd ui/web-console && npm run lint
+      - run: cd ui/web-console && npm run build
