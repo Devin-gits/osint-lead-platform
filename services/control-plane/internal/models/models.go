@@ -18,10 +18,10 @@ const (
 
 // RiskLevel values.
 const (
-	RiskLow    = "low"
-	RiskMedium = "medium"
-	RiskHigh   = "high"
-	RiskNA     = "n/a"
+	RiskLow     = "low"
+	RiskMedium  = "medium"
+	RiskHigh    = "high"
+	RiskUnknown = "unknown"
 )
 
 // Module names.
@@ -76,20 +76,20 @@ type Subject struct {
 	Handle        string `json:"handle,omitempty"`
 }
 
-// AuditEvent is one structured audit line. raw_json preserves the module's
-// stderr/audit payload verbatim.
+// AuditEvent is one structured audit line. raw_stderr_json preserves the
+// module's stderr/audit payload verbatim.
 type AuditEvent struct {
-	ID         string          `json:"id"`
-	LeadID     string          `json:"lead_id"`
-	RunID      *string         `json:"run_id,omitempty"`
-	Module     string          `json:"module"`
-	Tool       string          `json:"tool"`
-	CheckedAt  time.Time       `json:"checked_at"`
-	Status     string          `json:"status"`
-	LegalBasis string          `json:"legal_basis"`
-	Subject    Subject         `json:"subject"`
-	RawJSON    json.RawMessage `json:"raw_json,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID            string          `json:"id"`
+	LeadID        string          `json:"lead_id"`
+	RunID         *string         `json:"run_id,omitempty"`
+	Module        string          `json:"module"`
+	Tool          string          `json:"tool"`
+	CheckedAt     time.Time       `json:"checked_at"`
+	Status        string          `json:"status"`
+	LegalBasis    string          `json:"legal_basis"`
+	Subject       Subject         `json:"subject"`
+	RawStderrJSON json.RawMessage `json:"raw_stderr_json,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // PipelineRun records a single-lead or batch execution.
@@ -108,13 +108,32 @@ type PipelineRun struct {
 	CreatedAt       time.Time  `json:"created_at"`
 }
 
+// ComplianceRule is one hard-coded governance rule.
+type ComplianceRule struct {
+	ID      int    `json:"id"`
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+}
+
+// ComplianceRiskRule maps a risk category to a risk level note.
+type ComplianceRiskRule struct {
+	Category  string `json:"category"`
+	RiskLevel string `json:"risk_level"`
+	Notes     string `json:"notes"`
+}
+
+// ChecklistItem is a compliance checklist entry.
+type ChecklistItem struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 // ComplianceSummary is returned by GET /api/compliance/summary.
 type ComplianceSummary struct {
-	TotalLeads         int            `json:"total_leads"`
-	LeadsByStage       map[string]int `json:"leads_by_stage"`
-	LeadsByRisk        map[string]int `json:"leads_by_risk"`
-	TotalAuditEvents   int            `json:"total_audit_events"`
-	Last24hAuditEvents int            `json:"last_24h_audit_events"`
+	HardRules  []ComplianceRule     `json:"hard_rules"`
+	RiskTable  []ComplianceRiskRule `json:"risk_table"`
+	Checklist  []ChecklistItem      `json:"checklist"`
+	Exclusions []string             `json:"exclusions"`
 }
 
 // LegalBasisGDPR is the default legal basis used when none is supplied.

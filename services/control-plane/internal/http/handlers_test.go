@@ -87,8 +87,7 @@ func TestServer_RunModules(t *testing.T) {
 		t.Fatalf("decode run response: %v", err)
 	}
 	updated := runResp.Data.(map[string]any)
-	results := updated["results"].(map[string]any)
-	ev := results["email_validate"].(map[string]any)
+	ev := updated["email_validate"].(map[string]any)
 	if ev["status"] != "ok" {
 		t.Fatalf("expected email status ok, got %v", ev["status"])
 	}

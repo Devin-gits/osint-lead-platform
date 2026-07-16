@@ -239,16 +239,16 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			checkedTime = checkedAt
 		}
 		event := models.AuditEvent{
-			ID:         util.NewID(),
-			LeadID:     lead.ID,
-			RunID:      &runID,
-			Module:     models.ModuleEmailValidate,
-			Tool:       audit.Tool,
-			CheckedAt:  checkedTime,
-			Status:     audit.Status,
-			LegalBasis: audit.LegalBasis,
-			Subject:    models.Subject{Email: audit.Email},
-			RawJSON:    raw,
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        models.ModuleEmailValidate,
+			Tool:          audit.Tool,
+			CheckedAt:     checkedTime,
+			Status:        audit.Status,
+			LegalBasis:    audit.LegalBasis,
+			Subject:       models.Subject{Email: audit.Email},
+			RawStderrJSON: raw,
 		}
 		return models.ModuleResult{Key: "email_validate", Result: res, AuditEvents: []models.AuditEvent{event}}, nil
 
@@ -262,16 +262,16 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 				checkedTime = checkedAt
 			}
 			events = append(events, models.AuditEvent{
-				ID:         util.NewID(),
-				LeadID:     lead.ID,
-				RunID:      &runID,
-				Module:     models.ModulePhoneValidate,
-				Tool:       a.Tool,
-				CheckedAt:  checkedTime,
-				Status:     a.Status,
-				LegalBasis: a.LegalBasis,
-				Subject:    models.Subject{PhoneRedacted: a.Phone},
-				RawJSON:    auditRaw,
+				ID:            util.NewID(),
+				LeadID:        lead.ID,
+				RunID:         &runID,
+				Module:        models.ModulePhoneValidate,
+				Tool:          a.Tool,
+				CheckedAt:     checkedTime,
+				Status:        a.Status,
+				LegalBasis:    a.LegalBasis,
+				Subject:       models.Subject{PhoneRedacted: a.Phone},
+				RawStderrJSON: auditRaw,
 			})
 		}
 		return models.ModuleResult{Key: "phone_validate", Result: res, AuditEvents: events}, nil
@@ -284,16 +284,16 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		}
 		raw, _ := json.Marshal(map[string]string{"reason": reason})
 		event := models.AuditEvent{
-			ID:         util.NewID(),
-			LeadID:     lead.ID,
-			RunID:      &runID,
-			Module:     models.ModuleSocialFootprint,
-			Tool:       "control-plane",
-			CheckedAt:  checkedAt,
-			Status:     "skipped",
-			LegalBasis: legalBasis,
-			Subject:    subject,
-			RawJSON:    raw,
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        models.ModuleSocialFootprint,
+			Tool:          "control-plane",
+			CheckedAt:     checkedAt,
+			Status:        "skipped",
+			LegalBasis:    legalBasis,
+			Subject:       subject,
+			RawStderrJSON: raw,
 		}
 		result := map[string]any{
 			"status":  "skipped",
@@ -310,16 +310,16 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		}
 		raw, _ := json.Marshal(map[string]string{"reason": "not wired in control-plane v1"})
 		event := models.AuditEvent{
-			ID:         util.NewID(),
-			LeadID:     lead.ID,
-			RunID:      &runID,
-			Module:     name,
-			Tool:       "control-plane",
-			CheckedAt:  checkedAt,
-			Status:     "skipped",
-			LegalBasis: legalBasis,
-			Subject:    subject,
-			RawJSON:    raw,
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        name,
+			Tool:          "control-plane",
+			CheckedAt:     checkedAt,
+			Status:        "skipped",
+			LegalBasis:    legalBasis,
+			Subject:       subject,
+			RawStderrJSON: raw,
 		}
 		return models.ModuleResult{Key: strings.ReplaceAll(name, "-", "_"), Result: map[string]any{
 			"status": "skipped",
@@ -388,8 +388,8 @@ func computeStage(current string, executed []string, statuses map[string]string)
 }
 
 func computeRisk(results map[string]any) string {
-	priority := map[string]int{models.RiskNA: 0, models.RiskLow: 1, models.RiskMedium: 2, models.RiskHigh: 3}
-	max := models.RiskNA
+	priority := map[string]int{models.RiskUnknown: 0, models.RiskLow: 1, models.RiskMedium: 2, models.RiskHigh: 3}
+	max := models.RiskUnknown
 	maxP := priority[max]
 
 	if email, ok := results["email_validate"].(map[string]any); ok {

@@ -27,6 +27,7 @@ type Store interface {
 
 	CreateAuditEvent(ctx context.Context, event models.AuditEvent) (models.AuditEvent, error)
 	ListAuditEvents(ctx context.Context, params models.AuditSearchParams) ([]models.AuditEvent, int, error)
+	ListAuditEventsByLead(ctx context.Context, leadID string) ([]models.AuditEvent, error)
 
 	CreatePipelineRun(ctx context.Context, run models.PipelineRun) (models.PipelineRun, error)
 	ListPipelineRuns(ctx context.Context, params models.AuditSearchParams) ([]models.PipelineRun, int, error)
@@ -92,7 +93,7 @@ func matchFreeText(l models.Lead, q string) bool {
 // matchModuleStatus reports whether any of the four namespaced module result
 // blocks has a status equal to want. A missing key is treated as "not_run".
 func matchModuleStatus(l models.Lead, want string) bool {
-	keys := []string{models.ModuleEmailValidate, models.ModulePhoneValidate, models.ModuleDomainIntel, models.ModuleSocialFootprint}
+	keys := []string{"email_validate", "phone_validate", "domain_intel", "social_footprint"}
 	for _, key := range keys {
 		status := moduleResultStatus(l.Results, key)
 		if strings.EqualFold(status, want) {

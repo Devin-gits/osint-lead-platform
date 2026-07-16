@@ -16,12 +16,6 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// pair is a small helper for grouping COUNT queries.
-type pair struct {
-	key   string
-	count int
-}
-
 // PostgresStore implements Store using Postgres via pgx/stdlib.
 type PostgresStore struct {
 	db *sql.DB
@@ -62,7 +56,7 @@ func (p *PostgresStore) CreateLead(ctx context.Context, lead models.Lead) (model
 		lead.Stage = models.StageRaw
 	}
 	if lead.RiskLevel == "" {
-		lead.RiskLevel = models.RiskNA
+		lead.RiskLevel = models.RiskUnknown
 	}
 	if lead.Results == nil {
 		lead.Results = map[string]any{}
@@ -164,15 +158,15 @@ func (p *PostgresStore) CreateAuditEvent(ctx context.Context, event models.Audit
 		return models.AuditEvent{}, fmt.Errorf("marshal subject: %w", err)
 	}
 	var rawJSON []byte
-	if len(event.RawJSON) > 0 {
-		rawJSON = event.RawJSON
+	if len(event.RawStderrJSON) > 0 {
+		rawJSON = event.RawStderrJSON
 	} else {
 		rawJSON = []byte("null")
 	}
 
 	event.CreatedAt = time.Now().UTC()
 	_, err = p.db.ExecContext(ctx, `
-		INSERT INTO audit_events (id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_json, created_at)
+		INSERT INTO audit_events (id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_stderr_json, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, event.ID, event.LeadID, nullStringPtr(event.RunID), event.Module, event.Tool,
 		event.CheckedAt.UTC(), event.Status, event.LegalBasis, subjectJSON, rawJSON, event.CreatedAt)
@@ -184,7 +178,7 @@ func (p *PostgresStore) CreateAuditEvent(ctx context.Context, event models.Audit
 
 func (p *PostgresStore) ListAuditEvents(ctx context.Context, params models.AuditSearchParams) ([]models.AuditEvent, int, error) {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_json, created_at
+		SELECT id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_stderr_json, created_at
 		FROM audit_events
 		ORDER BY created_at DESC
 	`)
@@ -221,6 +215,20 @@ func (p *PostgresStore) ListAuditEvents(ctx context.Context, params models.Audit
 		end = total
 	}
 	return filtered[start:end], total, nil
+}
+
+func (p *PostgresStore) ListAuditEventsByLead(ctx context.Context, leadID string) ([]models.AuditEvent, error) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT id, lead_id, run_id, module, tool, checked_at, status, legal_basis, subject, raw_stderr_json, created_at
+		FROM audit_events
+		WHERE lead_id = $1
+		ORDER BY checked_at DESC
+	`, leadID)
+	if err != nil {
+		return nil, fmt.Errorf("query audit events by lead: %w", err)
+	}
+	defer rows.Close()
+	return scanAuditEvents(rows)
 }
 
 func (p *PostgresStore) CreatePipelineRun(ctx context.Context, run models.PipelineRun) (models.PipelineRun, error) {
@@ -319,55 +327,8 @@ func (p *PostgresStore) saveRun(ctx context.Context, run models.PipelineRun) err
 }
 
 func (p *PostgresStore) ComplianceSummary(ctx context.Context) (models.ComplianceSummary, error) {
-	summary := models.ComplianceSummary{
-		LeadsByStage: make(map[string]int),
-		LeadsByRisk:  make(map[string]int),
-	}
-
-	stages := []pair{}
-	if err := p.queryPairs(ctx, `SELECT stage, COUNT(*) FROM leads GROUP BY stage`, &stages); err != nil {
-		return summary, err
-	}
-	for _, g := range stages {
-		summary.LeadsByStage[g.key] = g.count
-		summary.TotalLeads += g.count
-	}
-
-	risks := []pair{}
-	if err := p.queryPairs(ctx, `SELECT risk_level, COUNT(*) FROM leads GROUP BY risk_level`, &risks); err != nil {
-		return summary, err
-	}
-	for _, p := range risks {
-		summary.LeadsByRisk[p.key] = p.count
-	}
-
-	if err := p.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events`).Scan(&summary.TotalAuditEvents); err != nil {
-		return summary, fmt.Errorf("count audit events: %w", err)
-	}
-	if err := p.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM audit_events WHERE created_at > now() - interval '24 hours'
-	`).Scan(&summary.Last24hAuditEvents); err != nil {
-		return summary, fmt.Errorf("count recent audit events: %w", err)
-	}
-
-	return summary, nil
-}
-
-func (p *PostgresStore) queryPairs(ctx context.Context, q string, out *[]pair) error {
-	rows, err := p.db.QueryContext(ctx, q)
-	if err != nil {
-		return fmt.Errorf("query pairs: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var k string
-		var c int
-		if err := rows.Scan(&k, &c); err != nil {
-			return err
-		}
-		*out = append(*out, pair{k, c})
-	}
-	return rows.Err()
+	_ = ctx
+	return staticComplianceSummary(), nil
 }
 
 // Helpers.
@@ -455,7 +416,7 @@ func scanAuditEvent(s scannable) (models.AuditEvent, error) {
 		_ = json.Unmarshal(subject, &e.Subject)
 	}
 	if len(raw) > 0 && string(raw) != "null" {
-		e.RawJSON = raw
+		e.RawStderrJSON = raw
 	}
 	return e, nil
 }

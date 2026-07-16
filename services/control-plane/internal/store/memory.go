@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 )
@@ -40,7 +39,7 @@ func (s *MemoryStore) CreateLead(_ context.Context, lead models.Lead) (models.Le
 		lead.Stage = models.StageRaw
 	}
 	if lead.RiskLevel == "" {
-		lead.RiskLevel = models.RiskNA
+		lead.RiskLevel = models.RiskUnknown
 	}
 	if lead.Results == nil {
 		lead.Results = map[string]any{}
@@ -131,6 +130,22 @@ func (s *MemoryStore) ListAuditEvents(_ context.Context, params models.AuditSear
 	return filtered[start:end], total, nil
 }
 
+func (s *MemoryStore) ListAuditEventsByLead(_ context.Context, leadID string) ([]models.AuditEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filtered := make([]models.AuditEvent, 0)
+	for _, e := range s.audit {
+		if e.LeadID == leadID {
+			filtered = append(filtered, e)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CheckedAt.After(filtered[j].CheckedAt)
+	})
+	return filtered, nil
+}
+
 func (s *MemoryStore) CreatePipelineRun(_ context.Context, run models.PipelineRun) (models.PipelineRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -187,23 +202,5 @@ func (s *MemoryStore) UpdatePipelineRun(_ context.Context, run models.PipelineRu
 }
 
 func (s *MemoryStore) ComplianceSummary(_ context.Context) (models.ComplianceSummary, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	summary := models.ComplianceSummary{
-		LeadsByStage: make(map[string]int),
-		LeadsByRisk:  make(map[string]int),
-	}
-	for _, l := range s.leads {
-		summary.TotalLeads++
-		summary.LeadsByStage[l.Stage]++
-		summary.LeadsByRisk[l.RiskLevel]++
-	}
-	for _, e := range s.audit {
-		summary.TotalAuditEvents++
-		if e.CreatedAt.After(time.Now().UTC().Add(-24 * time.Hour)) {
-			summary.Last24hAuditEvents++
-		}
-	}
-	return summary, nil
+	return staticComplianceSummary(), nil
 }

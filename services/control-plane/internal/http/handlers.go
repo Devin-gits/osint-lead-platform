@@ -80,7 +80,7 @@ func (s *Server) handleCreateLead(w http.ResponseWriter, r *http.Request) {
 		SourceID:      raw.SourceID,
 		PermissionRef: raw.PermissionRef,
 		Stage:         models.StageRaw,
-		RiskLevel:     models.RiskNA,
+		RiskLevel:     models.RiskUnknown,
 		Results:       map[string]any{},
 	}
 
@@ -89,7 +89,7 @@ func (s *Server) handleCreateLead(w http.ResponseWriter, r *http.Request) {
 		mapStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, response{Data: created})
+	writeJSON(w, http.StatusCreated, response{Data: leadToJSON(created, false)})
 }
 
 func (s *Server) handleListLeads(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +108,12 @@ func (s *Server) handleListLeads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out := make([]map[string]any, len(leads))
+	for i, l := range leads {
+		out[i] = leadToJSON(l, false)
+	}
 	writeJSON(w, http.StatusOK, response{
-		Data: leads,
+		Data: out,
 		Meta: listMeta{Page: params.Page, PageSize: params.PageSize, Total: total},
 	})
 }
@@ -127,13 +131,14 @@ func (s *Server) handleGetLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hydrate audit events for the detail view.
-	events, _, err := s.store.ListAuditEvents(r.Context(), models.AuditSearchParams{})
-	if err == nil {
-		lead.AuditEvents = filterAuditByLead(events, lead.ID)
+	events, err := s.store.ListAuditEventsByLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
 	}
+	lead.AuditEvents = events
 
-	writeJSON(w, http.StatusOK, response{Data: lead})
+	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
 }
 
 func (s *Server) handleRunModules(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +170,14 @@ func (s *Server) handleRunModules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, response{Data: lead})
+	events, err := s.store.ListAuditEventsByLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	lead.AuditEvents = events
+
+	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
 }
 
 func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
@@ -290,14 +302,35 @@ func parseInt(s string, def int) int {
 	return v
 }
 
-func filterAuditByLead(events []models.AuditEvent, leadID string) []models.AuditEvent {
-	var out []models.AuditEvent
-	for _, e := range events {
-		if e.LeadID == leadID {
-			out = append(out, e)
-		}
+// leadToJSON converts a Lead to the JSON shape the frontend expects: module
+// result keys are flattened to the top level and the internal Results map is
+// omitted. Audit events are included only when withAudit is true.
+func leadToJSON(lead models.Lead, withAudit bool) map[string]any {
+	m := map[string]any{
+		"id":             lead.ID,
+		"name":           lead.Name,
+		"email":          lead.Email,
+		"phone":          lead.Phone,
+		"company":        lead.Company,
+		"domain":         lead.Domain,
+		"source_id":      lead.SourceID,
+		"permission_ref": lead.PermissionRef,
+		"stage":          lead.Stage,
+		"risk_level":     lead.RiskLevel,
+		"risk_score":     lead.RiskScore,
+		"created_at":     lead.CreatedAt,
+		"updated_at":     lead.UpdatedAt,
 	}
-	return out
+	if lead.RiskScore == nil {
+		delete(m, "risk_score")
+	}
+	for k, v := range lead.Results {
+		m[k] = v
+	}
+	if withAudit {
+		m["audit_events"] = lead.AuditEvents
+	}
+	return m
 }
 
 // currentTime is used by tests that want deterministic timestamps.
