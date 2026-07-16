@@ -9,8 +9,9 @@ leads, audit events, and pipeline runs.
 - Wired modules in v1:
   - `email-validate` (in-process, AfterShip/email-verifier)
   - `phone-validate` (in-process, libphonenumber; optional numverify)
+  - `domain-intel` (in-process Go web-check reimplementation + optional theHarvester subprocess)
 - Stubbed / not wired in v1:
-  - `domain-intel`, `social-footprint`, `extraction`, `company-enrich`
+  - `social-footprint`, `extraction`, `company-enrich`
 - Uses Postgres for persistence; falls back to an in-memory store when
   `DATABASE_URL` is unset (useful for local tests).
 
@@ -27,6 +28,7 @@ leads, audit events, and pipeline runs.
 | `PORT` | `8080` | HTTP port |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
 | `MODULE_TIMEOUT` | `10s` | Per-module timeout |
+| `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
 
 ## Run locally
 
@@ -85,7 +87,12 @@ curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
   -H 'Content-Type: application/json' \
   -d '{"modules":["email-validate"]}' | jq '.data.email_validate'
 
-# 3. Get the lead with audit events (raw_stderr_json and legal_basis)
+# 3. Run domain-intel (optionally set DOMAIN_INTEL_HARVESTER_BIN for theHarvester)
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["domain-intel"]}' | jq '.data.domain_intel'
+
+# 4. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
 ```
 
@@ -98,11 +105,15 @@ With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
   `phone_validate`, `domain_intel`, `social_footprint`). The internal `results`
   map is not part of the public JSON.
 - `risk_level` is one of `low`, `medium`, `high`, or `unknown`.
+- Stage advances only when an executed module reports `status: "ok"`. Skipped or
+  unknown modules do not move the lead forward (e.g., running `domain-intel` on a
+  lead with no domain stays `raw`).
 - Audit events use `raw_stderr_json` and include `legal_basis` on every line.
 
 ## Notes
 
-- No mock Next.js APIs; the UI will consume this real API in the next PR.
-- No `modules/`, `ui/web-console/`, evaluation, or CI changes in this PR.
+- No mock Next.js APIs; the UI consumes this real API.
+- No `modules/` code changes (the `domain-intel` library is used as-is via `go.mod` replace).
+- No `ui/web-console/`, evaluation, or CI changes in this PR.
 - Audit events include `legal_basis` on every line and never store raw phone
   numbers (the `phone-validate` module redacts them before returning).

@@ -44,7 +44,7 @@ func New() *Registry {
 			Name:          models.ModuleDomainIntel,
 			DisplayName:   "Domain Intelligence",
 			Category:      "ingest",
-			DevStatus:     "in_development",
+			DevStatus:     "available",
 			NamespacedKey: "domain_intel",
 			BackingTools:  []string{"lissy93/web-check (reimplemented)", "laramies/theHarvester (subprocess)"},
 			Description:   "DNS, TLS, WHOIS and public-subdomain signals for a lead's domain.",
@@ -91,7 +91,10 @@ func New() *Registry {
 			"Results are namespaced under the `email_validate` key. Audit records include the email checked, tool version, status and legal basis.",
 		models.ModulePhoneValidate: "Runs the offline libphonenumber-based local scanner. " +
 			"If NUMVERIFY_API_KEY is set an optional carrier lookup is attempted. Phone numbers are redacted in audit logs.",
-		models.ModuleDomainIntel:     "Not wired in control-plane v1. Will run a Go reimplementation of web-check plus a theHarvester subprocess in a future PR.",
+		models.ModuleDomainIntel: "Runs a Go reimplementation of lissy93/web-check's DNS/TLS/HTTP/WHOIS checks and, " +
+			"if theHarvester is installed on PATH (or DOMAIN_INTEL_HARVESTER_BIN is set), invokes it as a subprocess with a keyless source allowlist. " +
+			"Each sub-tool degrades to status 'unknown' independently on failure or timeout; the combined 'domain_intel' status is 'ok' if either sub-tool reports ok. " +
+			"Results are namespaced under the `domain_intel` key. Audit records include the domain, tool, status, legal basis and any error.",
 		models.ModuleSocialFootprint: "Not wired in control-plane v1. Will run the Maigret Python wrapper with a curated platform allow-list and an in-process rate limiter.",
 		models.ModuleExtraction:      "Planned for a future PR.",
 		models.ModuleCompanyEnrich:   "Planned for a future PR.",
