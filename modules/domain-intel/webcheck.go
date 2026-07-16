@@ -235,7 +235,7 @@ func inspectHTTP(ctx context.Context, domain string, timeout time.Duration) HTTP
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{}
 	var lastErr error
 
 	for _, scheme := range []string{"https", "http"} {
