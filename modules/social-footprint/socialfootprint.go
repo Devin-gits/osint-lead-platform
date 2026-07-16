@@ -38,6 +38,7 @@ package socialfootprint
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"time"
 )
@@ -103,13 +104,15 @@ type HandleResult struct {
 	Error        string           `json:"error,omitempty"`
 }
 
-// Result is the value stored under the lead's "social_footprint" key.
-type Result struct {
+// SocialFootprintResult is the value stored under the lead's "social_footprint" key.
+type SocialFootprintResult struct {
 	Status         string         `json:"status"`           // "ok" | "skipped"
 	Reason         string         `json:"reason,omitempty"` // set when Status == "skipped"
 	HandlesChecked []string       `json:"handles_checked"`  // the handle strings actually checked
 	Handles        []HandleResult `json:"handles,omitempty"`
 	ActiveSignals  int            `json:"active_signals"` // total "claimed" hits across all handles
+	Confidence     float64        `json:"confidence"`   // 0.0-1.0 ratio of claimed hits to max possible
+	Metadata       map[string]any `json:"metadata"`       // config/runtime facts for reviewers
 	CheckedAt      string         `json:"checked_at"`
 	SourceTool     string         `json:"source_tool"`
 	RateLimitNote  string         `json:"rate_limit_note"`
@@ -155,19 +158,47 @@ func NewValidator(timeout, minInterval time.Duration) *Validator {
 // rateLimitNote is the compliance-relevant note embedded in every result,
 // documenting the scope/rate discipline this module enforces.
 func (v *Validator) rateLimitNote() string {
-	return "per-lead rate-limited spot check (min " + v.limiter.minInterval.String() +
-		" between leads); scope hard-capped to a curated " +
+	return "per-lead rate-limited spot check (min " + v.limiter.interval().String() +
+		" between leads, exponential backoff on consecutive errors); scope hard-capped to a curated " +
 		strconv.Itoa(len(curatedPlatforms)) + "-platform allow-list and " +
 		strconv.Itoa(MaxHandles) + " handle candidates; recursion, profile scraping, and " +
 		"proxy/Cloudflare block-evasion disabled; " + LegalBasis
 }
 
+// confidence computes a simple 0.0-1.0 ratio of claimed signals to the
+// theoretical maximum for this call. It is intentionally conservative: even one
+// hit on a curated public platform is a meaningful signal, but a saturated
+// profile (claimed on many platforms) is a stronger one.
+func (v *Validator) confidence(handleCount, claimed int) float64 {
+	if handleCount == 0 {
+		return 0
+	}
+	max := handleCount * len(curatedPlatforms)
+	if max == 0 {
+		return 0
+	}
+	return math.Round(float64(claimed)/float64(max)*1000) / 1000
+}
+
+// metadata returns runtime/config facts for reviewers: scope, rate-limit base,
+// and legal basis. It is a stable snapshot per call and never includes PII.
+func (v *Validator) metadata() map[string]any {
+	return map[string]any{
+		"source_tool":        SourceTool,
+		"legal_basis":        LegalBasis,
+		"max_handles":        MaxHandles,
+		"platform_count":     len(curatedPlatforms),
+		"rate_limit_base":    v.limiter.minInterval.String(),
+		"rate_limit_current": v.limiter.interval().String(),
+	}
+}
+
 // Check derives candidate handles from the lead, runs a rate-limited, scope-
-// capped Maigret spot check for each, and returns the combined Result plus one
-// AuditRecord per handle checked (or a single record for a skip). It never
+// capped Maigret spot check for each, and returns the combined SocialFootprintResult
+// plus one AuditRecord per handle checked (or a single record for a skip). It never
 // returns an error: every failure is reported in-band so the pipeline stays
 // alive.
-func (v *Validator) Check(lead map[string]interface{}) (Result, []AuditRecord) {
+func (v *Validator) Check(lead map[string]interface{}) (SocialFootprintResult, []AuditRecord) {
 	now := time.Now().UTC()
 
 	candidates := deriveHandles(lead)
@@ -176,10 +207,12 @@ func (v *Validator) Check(lead map[string]interface{}) (Result, []AuditRecord) {
 	}
 
 	if len(candidates) == 0 {
-		res := Result{
+		res := SocialFootprintResult{
 			Status:         statusSkipped,
 			Reason:         "no usable handle could be derived from the lead (needs an email local-part or an enriched domain_intel.harvester sub-object)",
 			HandlesChecked: []string{},
+			Confidence:     0,
+			Metadata:       v.metadata(),
 			CheckedAt:      now.Format(time.RFC3339),
 			SourceTool:     SourceTool,
 			RateLimitNote:  v.rateLimitNote(),
@@ -199,21 +232,26 @@ func (v *Validator) Check(lead map[string]interface{}) (Result, []AuditRecord) {
 	// platform requests.
 	v.limiter.wait()
 
-	res := Result{
+	res := SocialFootprintResult{
 		Status:         statusOK,
 		HandlesChecked: make([]string, 0, len(candidates)),
 		Handles:        make([]HandleResult, 0, len(candidates)),
+		Metadata:       v.metadata(),
 		CheckedAt:      now.Format(time.RFC3339),
 		SourceTool:     SourceTool,
 		RateLimitNote:  v.rateLimitNote(),
 	}
 	audits := make([]AuditRecord, 0, len(candidates))
 
+	hadError := false
 	for _, c := range candidates {
 		hr := v.checkHandle(c, now)
 		res.Handles = append(res.Handles, hr)
 		res.HandlesChecked = append(res.HandlesChecked, c.handle)
 		res.ActiveSignals += hr.ClaimedCount
+		if hr.Status == statusUnknown {
+			hadError = true
+		}
 		audits = append(audits, AuditRecord{
 			Tool:       SourceTool,
 			CheckedAt:  now.Format(time.RFC3339),
@@ -221,6 +259,13 @@ func (v *Validator) Check(lead map[string]interface{}) (Result, []AuditRecord) {
 			Status:     hr.Status,
 			LegalBasis: LegalBasis,
 		})
+	}
+
+	res.Confidence = v.confidence(len(res.HandlesChecked), res.ActiveSignals)
+	if hadError {
+		v.limiter.backoff()
+	} else {
+		v.limiter.reset()
 	}
 	return res, audits
 }
@@ -250,6 +295,7 @@ func (v *Validator) checkHandle(c handleCandidate, now time.Time) (hr HandleResu
 	out, err := v.runner.run(ctx, c.handle, curatedPlatforms, v.timeout)
 	if err != nil {
 		hr.Error = err.Error()
+		v.limiter.backoff()
 		return hr
 	}
 	if out.Error != "" {

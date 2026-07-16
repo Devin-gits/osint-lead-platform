@@ -90,13 +90,18 @@ func TestDeriveHandles_Dedup(t *testing.T) {
 
 func TestNormalizeHandle(t *testing.T) {
 	cases := map[string]string{
-		"Jane.Smith":  "jane.smith",
-		"  bob  ":     "bob",
-		"a":           "", // too short
-		"1234":        "", // no letter
-		"j@ne!":       "jne",
-		"...x...":     "", // trims to "x", too short
-		"john_doe-99": "john_doe-99",
+		"Jane.Smith":                         "jane.smith",
+		"  bob  ":                            "bob",
+		"a":                                  "", // too short
+		"1234":                               "", // no letter
+		"j@ne!":                              "jne",
+		"...x...":                            "", // trims to "x", too short
+		"john_doe-99":                        "john_doe-99",
+		"@jane.smith":                        "jane.smith",
+		"https://github.com/jane.smith?tab=": "jane.smith",
+		"http://www.x.com/jsmith":            "jsmith",
+		"x.com/jsmith":                       "jsmith",
+		"https://github.com/@jsmith":         "jsmith",
 	}
 	for in, want := range cases {
 		if got := normalizeHandle(in); got != want {

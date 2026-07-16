@@ -39,7 +39,13 @@ this module derives candidate handles internally as a first-class step
    `www`/`mail`/`ns`. This composition means the module accepts either a **raw**
    lead (email only) or a **partially-enriched** one — it is purely additive and
    never required for the module to function.
-3. **No usable handle → `skipped`.** If nothing derivable passes validation
+3. **Handle normalization.** `normalizeHandle` strips common copy-paste noise
+   before validating: a leading `@`, `http(s)://` / `www.` URL prefixes, trailing
+   query strings, and final path segments. So a pasted profile URL such as
+   `https://twitter.com/@jane.smith?lang=en` is reduced to `jane.smith`. Only
+   letters, digits, `.`, `_`, and `-` are kept; handles under 2 characters or
+   with no letter are rejected.
+4. **No usable handle → `skipped`.** If nothing derivable passes validation
    (too short, no letter, not a plausible username), the module returns
    `status: "skipped"` with a reason — *correctly nothing to check* — as opposed
    to `"unknown"`, which would mean *tried and failed*.
@@ -77,7 +83,7 @@ restricts. Every one of those is disabled here as a **code-level** control:
 |---|---|---|
 | **Curated scope** | `curatedPlatforms` in [`maigret.go`](maigret.go); re-capped in the wrapper | Only a fixed list of **15 major platforms** is ever checked — never Maigret's 3,000+ site DB. The list is a compile-time constant passed explicitly on every call; it **cannot be widened at runtime**. The wrapper additionally hard-caps at `ABSOLUTE_MAX_SITES = 30`. |
 | **Handle cap** | `MaxHandles = 3` in [`socialfootprint.go`](socialfootprint.go) | At most 3 derived candidates checked per lead, bounding fan-out. |
-| **Per-lead rate limit** | `rateLimiter` in [`ratelimit.go`](ratelimit.go) | An in-process limiter enforces a **minimum delay (default 5s) between consecutive per-lead checks** when a caller loops over leads reusing one `Validator`. This makes "per-lead spot check, never a bulk sweep" a runtime guarantee, not a comment. |
+| **Per-lead rate limit** | `rateLimiter` in [`ratelimit.go`](ratelimit.go) | An in-process limiter enforces a **minimum delay (default 5s) between consecutive per-lead checks** when a caller loops over leads reusing one `Validator`. It also **backs off exponentially** on consecutive runner errors (capped at 5× the configured minimum or 60s, whichever is smaller) to avoid hammering platforms or the wrapper, and resets on a successful lead. This makes "per-lead spot check, never a bulk sweep" a runtime guarantee, not a comment. |
 | **No recursion** | wrapper calls Maigret's low-level `maigret()` once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
 | **No block-evasion** | wrapper passes `proxy=None, tor_proxy=None, i2p_proxy=None, cloudflare_bypass=None` | No residential-proxy / Tor / Cloudflare-bypass ToS-circumvention. |
 | **Minimal collection** | wrapper sets `is_parsing_enabled=False`; only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
@@ -105,6 +111,8 @@ Widening scope requires editing the constant **and** re-review.
   | `handles_checked` | []string | the handle strings actually checked (≤ `MaxHandles`) |
   | `handles` | []object | per-handle result blocks (see below) |
   | `active_signals` | int | total `"claimed"` hits across all handles — the headline "this identity is real/active" score |
+  | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × curated platforms`); a conservative, reviewer-visible score (rounded to 3 decimals) |
+  | `metadata` | object | non-PII runtime/config snapshot: `source_tool`, `legal_basis`, `max_handles`, `platform_count`, `rate_limit_base`, `rate_limit_current` |
   | `checked_at` | string | RFC3339 UTC timestamp |
   | `source_tool` | string | `soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)` |
   | `rate_limit_note` | string | the compliance-relevant scope/rate-limit note |
@@ -184,9 +192,18 @@ against private individuals' data**):
       }
     ],
     "active_signals": 5,
+    "confidence": 0.333,
+    "metadata": {
+      "source_tool": "soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)",
+      "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+      "max_handles": 3,
+      "platform_count": 15,
+      "rate_limit_base": "5s",
+      "rate_limit_current": "5s"
+    },
     "checked_at": "2026-07-13T14:35:09Z",
     "source_tool": "soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)",
-    "rate_limit_note": "per-lead rate-limited spot check (min 5s between leads); scope hard-capped to a curated 15-platform allow-list and 3 handle candidates; recursion, profile scraping, and proxy/Cloudflare block-evasion disabled; GDPR Art.6(1)(f) legitimate-interest"
+    "rate_limit_note": "per-lead rate-limited spot check (min 5s between leads, exponential backoff on consecutive errors); scope hard-capped to a curated 15-platform allow-list and 3 handle candidates; recursion, profile scraping, and proxy/Cloudflare block-evasion disabled; GDPR Art.6(1)(f) legitimate-interest"
   }
 }
 ```
@@ -210,6 +227,15 @@ echo '{"name":"No Email","phone":"+15551234567"}' | ./social-footprint
   "reason": "no usable handle could be derived from the lead (needs an email local-part or an enriched domain_intel.harvester sub-object)",
   "handles_checked": [],
   "active_signals": 0,
+  "confidence": 0,
+  "metadata": {
+    "source_tool": "soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)",
+    "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+    "max_handles": 3,
+    "platform_count": 15,
+    "rate_limit_base": "5s",
+    "rate_limit_current": "5s"
+  },
   "...": "..."
 }
 ```
@@ -250,7 +276,8 @@ go test ./...
   stripping, secondary harvester mining with infra-label exclusion, dedup, and
   `normalizeHandle` validation).
 - `ratelimit_test.go` proves the limiter does not delay the first call, spaces
-  the second, and honors a zero (disabled) interval.
+  the second, honors a zero (disabled) interval, and doubles/resets its effective
+  interval correctly for exponential backoff.
 - The CLI test (`cmd/social-footprint`) covers the full stdin→stdout contract:
   the `skipped` path fully offline, and a real **subprocess** round-trip against a
   fake wrapper script (proving JSON parse + audit-redaction without needing a live

@@ -170,15 +170,26 @@ func leadingLabel(host string) string {
 	return host
 }
 
-// normalizeHandle lowercases, trims, and validates a candidate handle. It keeps
-// only plausible username characters (letters, digits, '.', '_', '-') and
-// rejects handles that are too short or contain no letter — those are not usable
-// usernames and would only waste a Maigret run.
+// normalizeHandle lowercases, trims, and validates a candidate handle. It strips
+// common noise such as a leading '@', URLs, and trailing path/query fragments,
+// then keeps only plausible username characters (letters, digits, '.', '_', '-')
+// and rejects handles that are too short or contain no letter.
 func normalizeHandle(h string) string {
 	h = strings.TrimSpace(strings.ToLower(h))
 	if h == "" {
 		return ""
 	}
+
+	// Strip a leading '@' (common copy-paste noise).
+	h = strings.TrimPrefix(h, "@")
+
+	// Strip common URL prefixes and path/query fragments.
+	h = stripURLPrefix(h)
+
+	if h == "" {
+		return ""
+	}
+
 	var b strings.Builder
 	hasLetter := false
 	for _, r := range h {
@@ -196,4 +207,23 @@ func normalizeHandle(h string) string {
 		return ""
 	}
 	return clean
+}
+
+// stripURLPrefix removes http(s):// and www. prefixes, and returns the final
+// path segment (the handle) if the string looks like a profile URL. It also
+// strips a trailing query string. '@' inside the path is left to normalizeHandle
+// (it drops the '@' and keeps surrounding letters), except for a leading '@'
+// which normalizeHandle strips explicitly.
+func stripURLPrefix(h string) string {
+	h = strings.TrimPrefix(h, "https://")
+	h = strings.TrimPrefix(h, "http://")
+	h = strings.TrimPrefix(h, "www.")
+
+	if i := strings.Index(h, "?"); i >= 0 {
+		h = h[:i]
+	}
+	if i := strings.LastIndex(h, "/"); i >= 0 {
+		h = h[i+1:]
+	}
+	return strings.TrimSpace(h)
 }

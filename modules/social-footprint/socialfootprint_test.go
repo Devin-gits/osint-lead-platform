@@ -53,6 +53,12 @@ func TestCheck_ClaimedSignals(t *testing.T) {
 	if res.ActiveSignals != 1 {
 		t.Errorf("active_signals = %d, want 1", res.ActiveSignals)
 	}
+	if res.Confidence == 0 {
+		t.Errorf("confidence = %f, want > 0", res.Confidence)
+	}
+	if res.Metadata == nil {
+		t.Errorf("metadata should be populated")
+	}
 	if len(audits) != len(res.HandlesChecked) {
 		t.Errorf("expected one audit per checked handle: %d audits, %d handles", len(audits), len(res.HandlesChecked))
 	}

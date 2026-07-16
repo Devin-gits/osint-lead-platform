@@ -34,6 +34,8 @@ Priority order, deduped, then capped at `MaxHandles`:
 2. **email variants** (if dotted/separated): `janesmith`, `jsmith`
 3. **domain_intel.harvester** (optional): email local-parts from discovered emails; leading hostname labels excluding `infraLabels`
 
+`normalizeHandle` strips common copy-paste noise: leading `@`, `http(s)://` / `www.` prefixes, trailing query strings, and final path segments. Only letters, digits, `.`, `_`, and `-` are kept; handles under 2 characters or with no letter are rejected.
+
 No usable handle → top-level `status: "skipped"` (not `unknown`).
 
 Origins: `email-local-part` | `email-variant` | `domain-intel-harvester`.
@@ -44,7 +46,7 @@ Origins: `email-local-part` | `email-variant` | `domain-intel-harvester`.
 |-----------|--------|
 | 15 curated platforms only | `curatedPlatforms` in `maigret.go` |
 | Max 3 handles | `MaxHandles` |
-| Min delay between leads | `rateLimiter` (`DefaultMinInterval` 5s) |
+| Min delay between leads + exponential backoff on consecutive runner errors | `rateLimiter` (`DefaultMinInterval` 5s, capped at 60s) |
 | No recursion / profile parse / proxy / Tor / CF bypass | `wrapper/maigret_check.py` |
 | Audit subject = handle only | `AuditRecord.Handle` |
 
@@ -68,6 +70,8 @@ Widening scope requires code change + compliance re-review.
 | `handles_checked` | strings |
 | `handles[]` | per-handle blocks + `platforms[]`, `claimed_count` |
 | `active_signals` | total claimed hits (headline score) |
+| `confidence` | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (rounded to 3 decimals) |
+| `metadata` | non-PII runtime/config snapshot: `source_tool`, `legal_basis`, `max_handles`, `platform_count`, `rate_limit_base`, `rate_limit_current` |
 | `rate_limit_note` | compliance text embedded in every result |
 | `source_tool`, `checked_at` | |
 
