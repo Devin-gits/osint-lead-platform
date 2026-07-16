@@ -295,7 +295,8 @@ The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal c
 ## Test
 
 ```bash
-go test ./...
+make test       # deterministic, no cache: go test -count=1 ./...
+make test-short # unit tests only: go test -count=1 -short ./...
 ```
 
 - **Offline unit tests** (no Python, no network): `socialfootprint_test.go`
@@ -303,8 +304,8 @@ go test ./...
   `skipped` degrade, per-handle `unknown` degrade on runner error, the
   `MaxHandles` fan-out cap, and the curated-scope guardrail.
 - `handles_test.go` covers handle derivation (email primary + variants, `+tag`
-  stripping, secondary harvester mining with infra-label exclusion, dedup, and
-  `normalizeHandle` validation).
+  stripping, secondary harvester mining with infra-label exclusion, dedup,
+  `normalizeHandle` validation, and **origin labels** on every candidate.
 - `ratelimit_test.go` proves the limiter does not delay the first call, spaces
   the second, honors a zero (disabled) interval, and doubles/resets its effective
   interval correctly for exponential backoff.
@@ -312,6 +313,15 @@ go test ./...
   the `skipped` path fully offline, and a real **subprocess** round-trip against a
   fake wrapper script (proving JSON parse + audit-redaction without needing a live
   Maigret), plus the only non-zero-exit path (unreadable stdin).
+- **Integration tests** are guarded by the `integration` build tag and never run
+  under `go test ./...`:
+
+  ```bash
+  make test-integration   # go test -count=1 -tags integration ./...
+  ```
+
+  `maigret_integration_test.go` performs a live Maigret run and is skipped if
+  `python3` is unavailable.
 
 The output shown above under **Run it** was additionally captured from a **live**
 run against the real embedded Maigret 0.6.2 during development.
