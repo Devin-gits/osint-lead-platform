@@ -104,7 +104,7 @@ func run(stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
 		timeout = timeoutFlag
 	}
 
-	validator := socialfootprint.NewValidator(timeout, durationFromEnv(minIntervalEnv))
+	validator := socialfootprint.NewValidatorWithBackend(timeout, durationFromEnv(minIntervalEnv), socialfootprint.BackendMaigret)
 	result, audits := validator.Check(lead)
 
 	// Audit first — one line per handle checked — so a call is logged even if

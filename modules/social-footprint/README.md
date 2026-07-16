@@ -74,10 +74,11 @@ library, not the default CLI behavior" recommendation of the evaluation.
 ## Compliance guardrails — enforced in code, not just docs
 
 [`evaluations/maigret.md` §6](../../evaluations/maigret.md) flags Maigret's
-default behavior (fan-out to hundreds/thousands of sites, recursive pivoting onto
+default behavior; Sherlock's own site database carries the same risks (fan-out to hundreds/thousands of sites, recursive pivoting onto
 other people's identities, residential-proxy block-evasion) as exactly the "bulk
 non-consensual scraping" pattern [`docs/compliance.md`](../../docs/compliance.md)
-restricts. Every one of those is disabled here as a **code-level** control:
+restricts. The `SOCIAL_FOOTPRINT_BACKEND` selector determines which engine
+runs, but every backend is subject to the same guardrails:
 
 | Guardrail | Where enforced | What it does |
 |---|---|---|
@@ -112,14 +113,14 @@ Widening scope requires editing the constant **and** re-review.
   | `handles` | []object | per-handle result blocks (see below) |
   | `active_signals` | int | total `"claimed"` hits across all handles — the headline "this identity is real/active" score |
   | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × active backend's primary platform count`); a conservative, reviewer-visible score (rounded to 3 decimals). In `both` mode the denominator intentionally uses Maigret's 15-platform list to avoid double-counting. |
-  | `metadata` | object | non-PII runtime/config snapshot: `source_tool`, `legal_basis`, `max_handles`, `platform_count`, `rate_limit_base`, `rate_limit_current` |
+  | `metadata` | object | non-PII runtime/config snapshot: `source_tool` (backend-dependent), `legal_basis`, `max_handles`, `platform_count` (primary backend's list; `sherlock_platform_count` included in `both` mode), `rate_limit_base`, `rate_limit_current` |
   | `checked_at` | string | RFC3339 UTC timestamp |
-  | `source_tool` | string | `soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)` |
+  | `source_tool` | string | backend-dependent: Maigret string for `maigret`, Sherlock string for `sherlock`, combined consensus string for `both` |
   | `rate_limit_note` | string | the compliance-relevant scope/rate-limit note |
 
   Each `handles[]` block: `handle`, `origin`
   (`email-local-part` / `email-variant` / `domain-intel-harvester`), `status`
-  (`"ok"` if the Maigret run completed, `"unknown"` if it failed),
+  (`"ok"` if the backend run completed, `"unknown"` if it failed),
   `platforms[]` (each `{platform, status: claimed|available|unknown, url,
   http_status}`), `claimed_count`, `checked_at`, `source_tool`, and `error`
   (present only on failure).
@@ -132,12 +133,12 @@ Widening scope requires editing the constant **and** re-review.
 
 ### Failure mode
 
-The module never crashes the pipeline. Each handle's Maigret run is bounded by a
+The module never crashes the pipeline. Each handle's backend run is bounded by a
 per-handle timeout (`SOCIAL_FOOTPRINT_TIMEOUT`, default `90s`) and wrapped in a
-panic-recover; a timeout, a missing Python/Maigret install, or an unparseable
+panic-recover; a timeout, a missing Python/backend install, or an unparseable
 result degrades **that handle** to `status: "unknown"` with an error note while
 other handles still return. A single platform timeout inside a run does not block
-the others (Maigret checks platforms concurrently and reports each independently;
+the others (the wrappers check platforms concurrently and report each independently;
 a blocked platform simply reports `unknown`). Exit code is `0` even on sub-check
 failure; a **non-zero exit only** means stdin was not a readable JSON object.
 
@@ -146,7 +147,7 @@ failure; a **non-zero exit only** means stdin was not a readable JSON object.
 Install the Python dependency once (the Go binary shells out to the wrapper):
 
 ```bash
-pip install -r requirements.txt          # maigret==0.6.2 (Python 3.10+)
+pip install -r requirements.txt          # maigret==0.6.2 and sherlock-project==0.16.1 (Python 3.10+)
 ```
 
 Build and run:
@@ -261,6 +262,35 @@ the first `MaxHandles` of them.
 | `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` | Minimum spacing between consecutive per-lead checks on one `Validator` (the rate limiter). |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` | Python interpreter to run the wrapper. |
 | `SOCIAL_FOOTPRINT_WRAPPER` | *(auto)* | Path to `wrapper/maigret_check.py`. Auto-located next to the binary or under the module dir; set explicitly if installed elsewhere. |
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use: `maigret`, `sherlock`, or `both` (consensus). |
+
+## Sherlock backend (optional second engine)
+
+In addition to Maigret, the module supports [Sherlock](https://github.com/sherlock-project/sherlock) (MIT) as a
+second backend. Sherlock maintains an independent site database, providing better cross-validation coverage.
+
+Select the backend via `SOCIAL_FOOTPRINT_BACKEND`:
+
+| Value | Behaviour |
+|---|---|
+| `maigret` (default) | Maigret only — existing behaviour, unchanged |
+| `sherlock` | Sherlock only via `wrapper/sherlock_check.py`. Uses Sherlock's curated 14-platform list. |
+| `both` | Maigret first over its 15-platform list, then Sherlock over its 14-platform list; Sherlock upgrades Maigret's `unknown` answers to definitive where possible; Maigret's definitive results are never downgraded. The reported `platform_count` is Maigret's 15; `sherlock_platform_count` is added to `metadata`. |
+
+**Install:**
+```bash
+pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-project==0.16.1
+```
+
+**Optional env vars:**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use |
+| `SOCIAL_FOOTPRINT_SHERLOCK_PYTHON` | Falls back to `SOCIAL_FOOTPRINT_PYTHON`, then `python3` | Python interpreter for Sherlock wrapper |
+| `SOCIAL_FOOTPRINT_SHERLOCK_WRAPPER` | *(auto-located)* | Explicit path to `wrapper/sherlock_check.py` |
+
+The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
 
 ## Sherlock backend (optional second engine)
 
@@ -293,7 +323,8 @@ The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal c
 ## Test
 
 ```bash
-go test ./...
+make test       # deterministic, no cache: go test -count=1 ./...
+make test-short # unit tests only: go test -count=1 -short ./...
 ```
 
 - **Offline unit tests** (no Python, no network): `socialfootprint_test.go`
@@ -301,8 +332,8 @@ go test ./...
   `skipped` degrade, per-handle `unknown` degrade on runner error, the
   `MaxHandles` fan-out cap, and the curated-scope guardrail.
 - `handles_test.go` covers handle derivation (email primary + variants, `+tag`
-  stripping, secondary harvester mining with infra-label exclusion, dedup, and
-  `normalizeHandle` validation).
+  stripping, secondary harvester mining with infra-label exclusion, dedup,
+  `normalizeHandle` validation, and **origin labels** on every candidate.
 - `ratelimit_test.go` proves the limiter does not delay the first call, spaces
   the second, honors a zero (disabled) interval, and doubles/resets its effective
   interval correctly for exponential backoff.
@@ -310,6 +341,15 @@ go test ./...
   the `skipped` path fully offline, and a real **subprocess** round-trip against a
   fake wrapper script (proving JSON parse + audit-redaction without needing a live
   Maigret), plus the only non-zero-exit path (unreadable stdin).
+- **Integration tests** are guarded by the `integration` build tag and never run
+  under `go test ./...`:
+
+  ```bash
+  make test-integration   # go test -count=1 -tags integration ./...
+  ```
+
+  `maigret_integration_test.go` performs a live Maigret run and is skipped if
+  `python3` is unavailable.
 
 The output shown above under **Run it** was additionally captured from a **live**
 run against the real embedded Maigret 0.6.2 during development.

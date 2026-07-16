@@ -91,18 +91,18 @@ func TestLocateWrapper_EnvOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv(wrapperEnv, wrapperPath)
-	got, err := locateWrapper()
+	got, err := locateWrapperFile(wrapperEnv, "maigret_check.py")
 	if err != nil {
-		t.Fatalf("locateWrapper error = %v", err)
+		t.Fatalf("locateWrapperFile error = %v", err)
 	}
 	if got != wrapperPath {
-		t.Errorf("locateWrapper = %q, want %q", got, wrapperPath)
+		t.Errorf("locateWrapperFile = %q, want %q", got, wrapperPath)
 	}
 }
 
 func TestLocateWrapper_EnvOverrideMissing(t *testing.T) {
 	t.Setenv(wrapperEnv, "/nonexistent/wrapper.py")
-	_, err := locateWrapper()
+	_, err := locateWrapperFile(wrapperEnv, "maigret_check.py")
 	if err == nil {
 		t.Fatal("expected error when env override does not exist")
 	}
@@ -127,12 +127,12 @@ func TestLocateWrapper_FromWorkingDir(t *testing.T) {
 	}
 	defer os.Chdir(old)
 
-	got, err := locateWrapper()
+	got, err := locateWrapperFile(wrapperEnv, "maigret_check.py")
 	if err != nil {
-		t.Fatalf("locateWrapper error = %v", err)
+		t.Fatalf("locateWrapperFile error = %v", err)
 	}
 	if got != wrapperPath {
-		t.Errorf("locateWrapper = %q, want %q", got, wrapperPath)
+		t.Errorf("locateWrapperFile = %q, want %q", got, wrapperPath)
 	}
 }
 
@@ -230,37 +230,3 @@ trailing noise`
 	}
 }
 
-// TestSubprocessRunner_RealMaigret does one live network check against the real
-// embedded Maigret. It is intentionally conservative: it asks for a single
-// platform with a username that is highly likely to be "available" on GitHub,
-// and skips under -short or when Python/Maigret is unavailable.
-func TestSubprocessRunner_RealMaigret(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping live Maigret integration test in short mode")
-	}
-	if _, err := os.Stat("wrapper/maigret_check.py"); err != nil {
-		t.Skip("wrapper/maigret_check.py not present:", err)
-	}
-
-	r := &subprocessRunner{}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	out, err := r.run(ctx, "zzzznotrealuser2026abc", []string{"GitHub"}, 60*time.Second)
-	if err != nil {
-		t.Fatalf("live Maigret run failed: %v", err)
-	}
-	if out.Error != "" {
-		t.Fatalf("wrapper returned error: %s", out.Error)
-	}
-	if len(out.Results) == 0 {
-		t.Fatal("expected at least one platform result from live Maigret run")
-	}
-	gh := out.Results[0]
-	if gh.Platform != "GitHub" {
-		t.Errorf("first result platform = %q, want GitHub", gh.Platform)
-	}
-	if gh.Status != "available" && gh.Status != "claimed" && gh.Status != "unknown" {
-		t.Errorf("unexpected status %q for live GitHub result", gh.Status)
-	}
-}

@@ -1,13 +1,16 @@
-.PHONY: build test test-short fmt vet pydeps clean
+.PHONY: build test test-short test-integration fmt vet pydeps clean
 
 build:
 	go build -o bin/social-footprint ./cmd/social-footprint
 
 test:
-	go test ./...
+	go test -count=1 ./...
 
 test-short:
-	go test -short ./...
+	go test -count=1 -short ./...
+
+test-integration:
+	go test -count=1 -tags integration ./...
 
 fmt:
 	go fmt ./...

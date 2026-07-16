@@ -3,6 +3,7 @@ package socialfootprint
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -27,7 +28,25 @@ func (f *fakeRunner) run(_ context.Context, handle string, _ []string, _ time.Du
 }
 
 func newTestValidator(r maigretRunner) *Validator {
-	return &Validator{timeout: time.Second, limiter: newRateLimiter(0), runner: r}
+	return &Validator{
+		timeout:   time.Second,
+		limiter:   newRateLimiter(0),
+		runner:    r,
+		backend:   BackendMaigret,
+		platforms: curatedPlatforms,
+	}
+}
+
+// newTestValidatorWithBackend builds a Validator for offline tests with an
+// explicit backend and platform list.
+func newTestValidatorWithBackend(r maigretRunner, backend string, platforms []string) *Validator {
+	return &Validator{
+		timeout:   time.Second,
+		limiter:   newRateLimiter(0),
+		runner:    r,
+		backend:   backend,
+		platforms: platforms,
+	}
 }
 
 // TestCheck_ClaimedSignals verifies the happy path: a lead with an email yields
@@ -174,4 +193,172 @@ type runnerFunc func(context.Context, string, []string, time.Duration) (wrapperO
 
 func (f runnerFunc) run(ctx context.Context, h string, p []string, t time.Duration) (wrapperOutput, error) {
 	return f(ctx, h, p, t)
+}
+
+// TestCheck_BackendAwareSourceTool verifies that SocialFootprintResult.SourceTool,
+// HandleResult.SourceTool, Metadata["source_tool"], and AuditRecord.Tool all reflect
+// the active backend.
+func TestCheck_BackendAwareSourceTool(t *testing.T) {
+	tests := []struct {
+		name      string
+		backend   string
+		platforms []string
+		wantTool  string
+	}{
+		{
+			name:      "maigret default",
+			backend:   BackendMaigret,
+			platforms: curatedPlatforms,
+			wantTool:  SourceTool,
+		},
+		{
+			name:      "sherlock only",
+			backend:   BackendSherlock,
+			platforms: sherlockCuratedPlatforms,
+			wantTool:  SourceToolSherlock,
+		},
+		{
+			name:      "both consensus",
+			backend:   BackendBoth,
+			platforms: curatedPlatforms,
+			wantTool:  SourceTool + " + " + SourceToolSherlock + " consensus",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{byHandle: map[string]wrapperOutput{
+				"jane.smith": {Results: []platformResult{
+					{Platform: "GitHub", Status: "claimed", URL: "https://github.com/jane.smith", HTTPStatus: 200},
+				}},
+			}}
+			v := newTestValidatorWithBackend(runner, tt.backend, tt.platforms)
+
+			res, audits := v.Check(map[string]interface{}{"email": "jane.smith@acme.com"})
+
+			if res.SourceTool != tt.wantTool {
+				t.Errorf("SocialFootprintResult.SourceTool = %q, want %q", res.SourceTool, tt.wantTool)
+			}
+			if got := res.Metadata["source_tool"]; got != tt.wantTool {
+				t.Errorf("Metadata[source_tool] = %v, want %v", got, tt.wantTool)
+			}
+			if len(res.Handles) == 0 {
+				t.Fatal("expected at least one handle result")
+			}
+			if res.Handles[0].SourceTool != tt.wantTool {
+				t.Errorf("HandleResult.SourceTool = %q, want %q", res.Handles[0].SourceTool, tt.wantTool)
+			}
+			if len(audits) == 0 {
+				t.Fatal("expected at least one audit record")
+			}
+			if audits[0].Tool != tt.wantTool {
+				t.Errorf("AuditRecord.Tool = %q, want %q", audits[0].Tool, tt.wantTool)
+			}
+		})
+	}
+}
+
+// TestCheck_BackendAwareSourceToolSkipped verifies the skip path also surfaces the
+// active backend in both the result and the audit record.
+func TestCheck_BackendAwareSourceToolSkipped(t *testing.T) {
+	v := newTestValidatorWithBackend(&fakeRunner{}, BackendSherlock, sherlockCuratedPlatforms)
+
+	res, audits := v.Check(map[string]interface{}{"name": "No Email"})
+
+	if res.SourceTool != SourceToolSherlock {
+		t.Errorf("skipped SourceTool = %q, want %q", res.SourceTool, SourceToolSherlock)
+	}
+	if len(audits) != 1 || audits[0].Tool != SourceToolSherlock {
+		t.Errorf("skip audit Tool = %q, want %q", audits[0].Tool, SourceToolSherlock)
+	}
+}
+
+// TestCheck_PlatformCountAndConfidencePerBackend verifies that metadata
+// platform_count and the confidence denominator match the active backend's
+// curated list.
+func TestCheck_PlatformCountAndConfidencePerBackend(t *testing.T) {
+	tests := []struct {
+		name            string
+		backend         string
+		platforms       []string
+		wantPlatformCnt int
+	}{
+		{
+			name:            "maigret",
+			backend:         BackendMaigret,
+			platforms:       curatedPlatforms,
+			wantPlatformCnt: len(curatedPlatforms),
+		},
+		{
+			name:            "sherlock",
+			backend:         BackendSherlock,
+			platforms:       sherlockCuratedPlatforms,
+			wantPlatformCnt: len(sherlockCuratedPlatforms),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// One claimed hit out of the full platform set for one handle.
+			runner := &fakeRunner{byHandle: map[string]wrapperOutput{
+				"bob": {Results: []platformResult{
+					{Platform: "GitHub", Status: "claimed", URL: "https://github.com/bob", HTTPStatus: 200},
+				}},
+			}}
+			v := newTestValidatorWithBackend(runner, tt.backend, tt.platforms)
+
+			res, _ := v.Check(map[string]interface{}{"email": "bob@acme.com"})
+
+			if got := res.Metadata["platform_count"]; got != tt.wantPlatformCnt {
+				t.Errorf("platform_count = %v, want %d", got, tt.wantPlatformCnt)
+			}
+
+			handleCount := len(res.HandlesChecked)
+			if handleCount == 0 {
+				t.Fatal("expected at least one checked handle")
+			}
+			wantConfidence := math.Round(1.0/float64(handleCount*tt.wantPlatformCnt)*1000) / 1000
+			if res.Confidence != wantConfidence {
+				t.Errorf("confidence = %f, want %f (1/(%d handles × %d platforms))", res.Confidence, wantConfidence, handleCount, tt.wantPlatformCnt)
+			}
+		})
+	}
+}
+
+// TestCheck_HandlePassesCorrectPlatforms verifies checkHandle forwards the
+// Validator's platform list into runner.run(), not always Maigret's list.
+func TestCheck_HandlePassesCorrectPlatforms(t *testing.T) {
+	tests := []struct {
+		name      string
+		backend   string
+		platforms []string
+	}{
+		{
+			name:      "maigret",
+			backend:   BackendMaigret,
+			platforms: curatedPlatforms,
+		},
+		{
+			name:      "sherlock",
+			backend:   BackendSherlock,
+			platforms: sherlockCuratedPlatforms,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPlatforms []string
+			runner := runnerFunc(func(_ context.Context, _ string, platforms []string, _ time.Duration) (wrapperOutput, error) {
+				gotPlatforms = platforms
+				return wrapperOutput{Results: []platformResult{}}, nil
+			})
+			v := newTestValidatorWithBackend(runner, tt.backend, tt.platforms)
+
+			v.Check(map[string]interface{}{"email": "alice@acme.com"})
+
+			if len(gotPlatforms) != len(tt.platforms) {
+				t.Errorf("runner got %d platforms, want %d", len(gotPlatforms), len(tt.platforms))
+			}
+		})
+	}
 }

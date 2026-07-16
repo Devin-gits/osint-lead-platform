@@ -1,8 +1,12 @@
-# Python dependencies for the social-footprint module's Maigret wrapper
-# (wrapper/maigret_check.py). Install into the Python environment the Go module
-# will invoke:  pip install -r requirements.txt
+# Python dependencies for the social-footprint module's wrappers.
+# Install into the Python environment the Go module will invoke:
+#   pip install -r requirements.txt
 #
-# Pinned to the exact version this module's wrapper + output parsing was verified
-# against (see evaluations/maigret.md, which evaluated 0.6.2). Maigret is
-# MIT-licensed, so embedding it as a library is permitted.
+# maigret: MIT-licensed. Embedded as a library by wrapper/maigret_check.py.
+# sherlock-project: MIT-licensed. Embedded as a library by wrapper/sherlock_check.py.
+# maigret==0.6.2 is pinned to the exact version evaluated in Stage 1
+# (see evaluations/maigret.md and docs/decisions/stage-1-decision.md).
+# sherlock-project==0.16.1 is pinned to the version verified by the new
+# wrapper and tests added in this PR (Stage 2 implementation).
 maigret==0.6.2
+sherlock-project==0.16.1
