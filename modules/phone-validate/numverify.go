@@ -75,7 +75,7 @@ func (r NumverifyResult) countryIfOK() string {
 	return ""
 }
 
-// numverifyClient holds the resolved API key and endpoint. A nil client means
+// numverifyClient holds the resolved API key and endpoint. An empty apiKey means
 // "no key configured" and yields a "skipped" result.
 type numverifyClient struct {
 	apiKey  string
@@ -83,19 +83,41 @@ type numverifyClient struct {
 	http    *http.Client
 }
 
+// numverifyConfig is the optional JSON config file shape. Env vars take
+// precedence over file values, so a config file can be committed as a template
+// while real secrets stay in the environment.
+type numverifyConfig struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+}
+
 // newNumverifyClientFromEnv builds a client from NUMVERIFY_API_KEY /
-// NUMVERIFY_BASE_URL. With no key set it returns nil, so the numverify path is
-// skipped cleanly and the module works with zero API keys configured.
+// NUMVERIFY_BASE_URL, optionally supplemented/overridden by NUMVERIFY_CONFIG.
+// With no key set the numverify path is skipped cleanly and the module works
+// with zero API keys configured.
 func newNumverifyClientFromEnv() *numverifyClient {
-	key := os.Getenv(APIKeyEnv)
-	if key == "" {
-		return nil
+	c := &numverifyClient{http: &http.Client{}}
+	cfg := numverifyConfig{}
+
+	if path := os.Getenv("NUMVERIFY_CONFIG"); path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(data, &cfg)
+		}
 	}
-	base := os.Getenv(BaseURLEnv)
-	if base == "" {
-		base = defaultNumverifyBaseURL
+
+	if v := os.Getenv(APIKeyEnv); v != "" {
+		cfg.APIKey = v
 	}
-	return &numverifyClient{apiKey: key, baseURL: base, http: &http.Client{}}
+	if v := os.Getenv(BaseURLEnv); v != "" {
+		cfg.BaseURL = v
+	}
+
+	c.apiKey = cfg.APIKey
+	c.baseURL = cfg.BaseURL
+	if c.baseURL == "" {
+		c.baseURL = defaultNumverifyBaseURL
+	}
+	return c
 }
 
 // numverifyResponse is numverify's documented /validate response shape. It also
@@ -118,18 +140,18 @@ type numverifyResponse struct {
 	} `json:"error"`
 }
 
-// run performs the numverify lookup. On a nil client (no key) it returns a
-// clean "skipped" result. Any network/HTTP/API failure degrades to "unknown"
-// with an error note — never a panic, never a blocked pipeline.
+// run performs the numverify lookup. With no API key it returns a clean
+// "skipped" result. Any network/HTTP/API failure degrades to "unknown" with an
+// error note — never a panic, never a blocked pipeline.
 func (c *numverifyClient) run(ctx context.Context, phone string, timeout time.Duration, now time.Time) NumverifyResult {
 	res := NumverifyResult{
 		CheckedAt:  now.Format(time.RFC3339),
 		SourceTool: NumverifyTool,
 	}
 
-	if c == nil {
+	if c == nil || c.apiKey == "" {
 		res.Status = StatusSkipped
-		res.Error = fmt.Sprintf("%s not set — numverify carrier lookup skipped (local scanner still ran)", APIKeyEnv)
+		res.Error = fmt.Sprintf("%s not set and no %s — numverify carrier lookup skipped (local scanner still ran)", APIKeyEnv, "NUMVERIFY_CONFIG")
 		return res
 	}
 
