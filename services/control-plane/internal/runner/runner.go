@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	domainintel "github.com/Moyeil-73/osint-lead-platform/modules/domain-intel"
 	emailvalidate "github.com/Moyeil-73/osint-lead-platform/modules/email-validate"
 	phonevalidate "github.com/Moyeil-73/osint-lead-platform/modules/phone-validate"
 
@@ -28,6 +29,7 @@ type Runner struct {
 	store      store.Store
 	emailVal   *emailvalidate.Validator
 	phoneVal   *phonevalidate.Validator
+	domainVal  *domainintel.Analyzer
 	socialMu   sync.Mutex
 	socialLast map[string]time.Time
 }
@@ -39,6 +41,7 @@ func New(s store.Store, timeout time.Duration) *Runner {
 		store:      s,
 		emailVal:   emailvalidate.NewValidator(timeout),
 		phoneVal:   phonevalidate.NewValidator(timeout),
+		domainVal:  domainintel.NewAnalyzer(timeout),
 		socialLast: make(map[string]time.Time),
 	}
 }
@@ -302,12 +305,64 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		}
 		return models.ModuleResult{Key: "social_footprint", Result: result, AuditEvents: []models.AuditEvent{event}}, nil
 
-	default:
-		// domain-intel, extraction, company-enrich and any unknown module: stub.
-		subject := models.Subject{Domain: lead.Domain}
-		if name == models.ModulePhoneValidate || name == models.ModuleEmailValidate {
-			subject = models.Subject{}
+	case models.ModuleDomainIntel:
+		if lead.Domain == "" {
+			raw, _ := json.Marshal(map[string]string{"reason": "missing domain"})
+			event := models.AuditEvent{
+				ID:            util.NewID(),
+				LeadID:        lead.ID,
+				RunID:         &runID,
+				Module:        models.ModuleDomainIntel,
+				Tool:          "control-plane",
+				CheckedAt:     checkedAt,
+				Status:        "skipped",
+				LegalBasis:    legalBasis,
+				Subject:       models.Subject{Domain: lead.Domain},
+				RawStderrJSON: string(raw),
+			}
+			return models.ModuleResult{
+				Key:         "domain_intel",
+				Result:      map[string]any{"status": "skipped", "reason": "missing domain"},
+				AuditEvents: []models.AuditEvent{event},
+			}, nil
 		}
+
+		res, audits := r.domainVal.Analyze(lead.Domain)
+		m, err := resultToMap(res)
+		if err != nil {
+			return models.ModuleResult{}, fmt.Errorf("convert domain-intel result: %w", err)
+		}
+
+		status := "unknown"
+		if res.WebCheck.Status == "ok" || res.Harvester.Status == "ok" {
+			status = "ok"
+		}
+		m["status"] = status
+
+		events := make([]models.AuditEvent, 0, len(audits))
+		for _, a := range audits {
+			auditRaw, _ := json.Marshal(a)
+			auditTime, _ := time.Parse(time.RFC3339, a.CheckedAt)
+			if auditTime.IsZero() {
+				auditTime = checkedAt
+			}
+			events = append(events, models.AuditEvent{
+				ID:            util.NewID(),
+				LeadID:        lead.ID,
+				RunID:         &runID,
+				Module:        models.ModuleDomainIntel,
+				Tool:          a.Tool,
+				CheckedAt:     auditTime,
+				Status:        a.Status,
+				LegalBasis:    a.LegalBasis,
+				Subject:       models.Subject{Domain: a.Domain},
+				RawStderrJSON: string(auditRaw),
+			})
+		}
+		return models.ModuleResult{Key: "domain_intel", Result: m, AuditEvents: events}, nil
+
+	default:
+		// extraction, company-enrich and any unknown module: stub.
 		raw, _ := json.Marshal(map[string]string{"reason": "not wired in control-plane v1"})
 		event := models.AuditEvent{
 			ID:            util.NewID(),
@@ -318,7 +373,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			CheckedAt:     checkedAt,
 			Status:        "skipped",
 			LegalBasis:    legalBasis,
-			Subject:       subject,
+			Subject:       models.Subject{},
 			RawStderrJSON: string(raw),
 		}
 		return models.ModuleResult{Key: strings.ReplaceAll(name, "-", "_"), Result: map[string]any{
@@ -367,6 +422,10 @@ func computeStage(current string, executed []string, statuses map[string]string)
 	}
 
 	for _, name := range executed {
+		if statuses[name] != "ok" {
+			// Do not advance stage on skipped/unknown modules.
+			continue
+		}
 		order := -1
 		switch name {
 		case models.ModuleDomainIntel, models.ModuleExtraction, models.ModuleCompanyEnrich:
