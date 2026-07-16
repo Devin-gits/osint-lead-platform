@@ -111,7 +111,7 @@ type SocialFootprintResult struct {
 	HandlesChecked []string       `json:"handles_checked"`  // the handle strings actually checked
 	Handles        []HandleResult `json:"handles,omitempty"`
 	ActiveSignals  int            `json:"active_signals"` // total "claimed" hits across all handles
-	Confidence     float64        `json:"confidence"`   // 0.0-1.0 ratio of claimed hits to max possible
+	Confidence     float64        `json:"confidence"`     // 0.0-1.0 ratio of claimed hits to max possible
 	Metadata       map[string]any `json:"metadata"`       // config/runtime facts for reviewers
 	CheckedAt      string         `json:"checked_at"`
 	SourceTool     string         `json:"source_tool"`

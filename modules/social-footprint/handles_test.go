@@ -13,6 +13,25 @@ func handleStrings(cands []handleCandidate) []string {
 	return out
 }
 
+func TestDeriveHandles_DirectUsername(t *testing.T) {
+	got := handleStrings(deriveHandles(map[string]interface{}{"username": "@jane.smith"}))
+	want := []string{"jane.smith"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("derived %v, want %v", got, want)
+	}
+}
+
+func TestDeriveHandles_DirectUsernamePrecedesEmail(t *testing.T) {
+	// An explicit username/handle should be checked first; email variants follow.
+	got := handleStrings(deriveHandles(map[string]interface{}{
+		"username": "direct_user",
+		"email":    "jane.smith@acme.com",
+	}))
+	if len(got) == 0 || got[0] != "direct_user" {
+		t.Errorf("expected direct_user first, got %v", got)
+	}
+}
+
 func TestDeriveHandles_EmailPrimaryAndVariants(t *testing.T) {
 	got := handleStrings(deriveHandles(map[string]interface{}{"email": "jane.smith@acme.com"}))
 	want := []string{"jane.smith", "janesmith", "jsmith"}

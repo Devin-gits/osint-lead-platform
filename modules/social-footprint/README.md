@@ -81,12 +81,12 @@ restricts. Every one of those is disabled here as a **code-level** control:
 
 | Guardrail | Where enforced | What it does |
 |---|---|---|
-| **Curated scope** | `curatedPlatforms` in [`maigret.go`](maigret.go); re-capped in the wrapper | Only a fixed list of **15 major platforms** is ever checked — never Maigret's 3,000+ site DB. The list is a compile-time constant passed explicitly on every call; it **cannot be widened at runtime**. The wrapper additionally hard-caps at `ABSOLUTE_MAX_SITES = 30`. |
+| **Curated scope** | `curatedPlatforms` in [`maigret.go`](maigret.go) and `sherlockCuratedPlatforms` in [`sherlock.go`](sherlock.go); re-capped in each wrapper | Maigret uses a fixed list of **15 major platforms**; Sherlock uses a fixed list of **14**. Each list is a compile-time constant passed explicitly on every call and **cannot be widened at runtime**. Each wrapper additionally hard-caps at `ABSOLUTE_MAX_SITES = 30`. |
 | **Handle cap** | `MaxHandles = 3` in [`socialfootprint.go`](socialfootprint.go) | At most 3 derived candidates checked per lead, bounding fan-out. |
 | **Per-lead rate limit** | `rateLimiter` in [`ratelimit.go`](ratelimit.go) | An in-process limiter enforces a **minimum delay (default 5s) between consecutive per-lead checks** when a caller loops over leads reusing one `Validator`. It also **backs off exponentially** on consecutive runner errors (capped at 5× the configured minimum or 60s, whichever is smaller) to avoid hammering platforms or the wrapper, and resets on a successful lead. This makes "per-lead spot check, never a bulk sweep" a runtime guarantee, not a comment. |
-| **No recursion** | wrapper calls Maigret's low-level `maigret()` once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
+| **No recursion** | each wrapper calls its tool's low-level search entrypoint (`maigret()` or `sherlock()`) once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
 | **No block-evasion** | wrapper passes `proxy=None, tor_proxy=None, i2p_proxy=None, cloudflare_bypass=None` | No residential-proxy / Tor / Cloudflare-bypass ToS-circumvention. |
-| **Minimal collection** | wrapper sets `is_parsing_enabled=False`; only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
+| **Minimal collection** | wrappers disable profile scraping (`is_parsing_enabled=False` for Maigret, `QueryNotifyPrint` with no browse for Sherlock); only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
 | **Documented legal basis** | `LegalBasis` logged on every audit line | `GDPR Art.6(1)(f) legitimate-interest` per `docs/compliance.md` (social footprint = "Medium" risk). |
 
 **Why 15 platforms.** The curated set —
@@ -111,7 +111,7 @@ Widening scope requires editing the constant **and** re-review.
   | `handles_checked` | []string | the handle strings actually checked (≤ `MaxHandles`) |
   | `handles` | []object | per-handle result blocks (see below) |
   | `active_signals` | int | total `"claimed"` hits across all handles — the headline "this identity is real/active" score |
-  | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × curated platforms`); a conservative, reviewer-visible score (rounded to 3 decimals) |
+  | `confidence` | float | `0.0`–`1.0` ratio of `active_signals` to the theoretical maximum (`handles_checked × active backend's primary platform count`); a conservative, reviewer-visible score (rounded to 3 decimals). In `both` mode the denominator intentionally uses Maigret's 15-platform list to avoid double-counting. |
   | `metadata` | object | non-PII runtime/config snapshot: `source_tool`, `legal_basis`, `max_handles`, `platform_count`, `rate_limit_base`, `rate_limit_current` |
   | `checked_at` | string | RFC3339 UTC timestamp |
   | `source_tool` | string | `soxoj/maigret@0.6.2 (embedded Python library via wrapper subprocess)` |
@@ -262,6 +262,34 @@ the first `MaxHandles` of them.
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` | Python interpreter to run the wrapper. |
 | `SOCIAL_FOOTPRINT_WRAPPER` | *(auto)* | Path to `wrapper/maigret_check.py`. Auto-located next to the binary or under the module dir; set explicitly if installed elsewhere. |
 
+## Sherlock backend (optional second engine)
+
+In addition to Maigret, the module supports [Sherlock](https://github.com/sherlock-project/sherlock) (MIT) as a
+second backend. Sherlock maintains an independent site database, providing better cross-validation coverage.
+
+Select the backend via `SOCIAL_FOOTPRINT_BACKEND`:
+
+| Value | Behaviour |
+|---|---|
+| `maigret` (default) | Maigret only — existing behaviour, unchanged. Uses Maigret's curated 15-platform list. |
+| `sherlock` | Sherlock only via `wrapper/sherlock_check.py`. Uses Sherlock's curated 14-platform list. |
+| `both` | Maigret first over its 15-platform list, then Sherlock over its 14-platform list; Sherlock upgrades Maigret's `unknown` answers to definitive where possible; Maigret's definitive results are never downgraded. The reported `platform_count` is Maigret's 15; `sherlock_platform_count` is added to `metadata`. |
+
+**Install:**
+```bash
+pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-project==0.16.1
+```
+
+**Optional env vars:**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use |
+| `SOCIAL_FOOTPRINT_SHERLOCK_PYTHON` | Falls back to `SOCIAL_FOOTPRINT_PYTHON`, then `python3` | Python interpreter for Sherlock wrapper |
+| `SOCIAL_FOOTPRINT_SHERLOCK_WRAPPER` | *(auto-located)* | Explicit path to `wrapper/sherlock_check.py` |
+
+The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
+
 ## Test
 
 ```bash
@@ -290,9 +318,10 @@ run against the real embedded Maigret 0.6.2 during development.
 
 - Go (built and tested with the toolchain pinned in `go.mod`, `go 1.22.5`).
   **No third-party Go dependencies** (standard library only).
-- **Python 3.10+** with **`maigret==0.6.2`** (**MIT**), pinned in
-  [`requirements.txt`](requirements.txt) — embedded as a library by the wrapper,
-  not shelled out to as a CLI. Maigret needs **no API keys** for username search.
-  Its site database (`data.json`) ships inside the pip package; the wrapper loads
-  the bundled copy by default (no per-run auto-download).
+- **Python 3.10+** with **`maigret==0.6.2`** and **`sherlock-project==0.16.1`**
+  (both **MIT**), pinned in
+  [`requirements.txt`](requirements.txt) — each embedded as a library by its wrapper,
+  not shelled out to as a CLI. Neither needs API keys for username search; each
+  wrapper loads the bundled site database (`data.json`) by default (no per-run
+  auto-download).
 - The module functions with **zero API keys and no paid services**.

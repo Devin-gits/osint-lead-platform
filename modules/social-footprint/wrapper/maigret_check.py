@@ -51,7 +51,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_output(username, requested, results, version, error=None):
+def build_output(username, requested, results, version, error=""):
     return {
         "tool": "maigret",
         "version": version,
@@ -59,7 +59,7 @@ def build_output(username, requested, results, version, error=None):
         "sites_requested": requested,
         "results": results,
         "checked_at": now_iso(),
-        "error": error,
+        "error": error or "",
     }
 
 
@@ -144,11 +144,20 @@ def normalize(raw):
     for site, data in raw.items():
         status_obj = data.get("status") if isinstance(data, dict) else None
         name = getattr(getattr(status_obj, "status", None), "name", "UNKNOWN")
+
+        http_status = 0
+        if isinstance(data, dict):
+            hs = data.get("http_status")
+            if isinstance(hs, int):
+                http_status = hs
+            elif isinstance(hs, str) and hs.isdigit():
+                http_status = int(hs)
+
         results.append({
             "platform": site,
             "status": _STATUS_MAP.get(name, "unknown"),
             "url": (data.get("url_user") if isinstance(data, dict) else None) or "",
-            "http_status": (data.get("http_status") if isinstance(data, dict) else None),
+            "http_status": http_status,
         })
     results.sort(key=lambda r: r["platform"].lower())
     return results

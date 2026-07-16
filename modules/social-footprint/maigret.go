@@ -161,19 +161,63 @@ func parseWrapperOutput(s string) (wrapperOutput, error) {
 	if s == "" {
 		return wrapperOutput{}, fmt.Errorf("empty output")
 	}
-	// The wrapper prints exactly one JSON object; if any stray lines precede it,
-	// take the last non-empty line (the emit()).
-	if i := strings.LastIndex(s, "\n"); i >= 0 {
-		last := strings.TrimSpace(s[i+1:])
-		if strings.HasPrefix(last, "{") {
-			s = last
+
+	var out wrapperOutput
+	// First try the whole string: the wrapper emits compact, single-line JSON.
+	if err := json.Unmarshal([]byte(s), &out); err == nil {
+		return out, nil
+	}
+
+	// Fallback: if stray log lines preceded or followed the JSON, scan for the
+	// first well-formed JSON object anywhere in the output (the wrapper emits
+	// exactly one). We accept either compact or pretty-printed objects.
+	if err := json.Unmarshal([]byte(extractJSONObject(s)), &out); err == nil {
+		return out, nil
+	}
+
+	return wrapperOutput{}, fmt.Errorf("could not parse wrapper output as JSON")
+}
+
+// extractJSONObject pulls the first top-level JSON object from s. It looks for
+// the first '{' and returns the substring that balances braces, or s if no
+// object is found.
+func extractJSONObject(s string) string {
+	start := strings.Index(s, "{")
+	if start < 0 {
+		return s
+	}
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 && c == '}' {
+				return s[start : i+1]
+			}
 		}
 	}
-	var out wrapperOutput
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return wrapperOutput{}, err
-	}
-	return out, nil
+	return s[start:]
 }
 
 func fileExists(p string) bool {
