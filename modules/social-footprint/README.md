@@ -88,6 +88,7 @@ runs, but every backend is subject to the same guardrails:
 | **No recursion** | each wrapper calls its tool's low-level search entrypoint (`maigret()` or `sherlock()`) once, never feeding discovered IDs back in | A lead never expands into a graph of *other* people's identities. |
 | **No block-evasion** | wrapper passes `proxy=None, tor_proxy=None, i2p_proxy=None, cloudflare_bypass=None` | No residential-proxy / Tor / Cloudflare-bypass ToS-circumvention. |
 | **Minimal collection** | wrappers disable profile scraping (`is_parsing_enabled=False` for Maigret, `QueryNotifyPrint` with no browse for Sherlock); only status + URL captured | Returns a per-platform **claimed/available/unknown** signal only — **no** scraped `fullname`/`bio`/`location`/linked-accounts — matching `docs/compliance.md`'s "avoid over-collecting beyond a simple match/no-match + confidence score" rule for the social-footprint category. |
+| **Osintgram command allowlist** | `wrapper/osintgram_check.py` hard-codes `ALLOWED_COMMANDS = {"info"}` and rejects all other commands before spawning | Prevents follower graphs, email/phone harvesting, media downloads, and address dumps. |
 | **Documented legal basis** | `LegalBasis` logged on every audit line | `GDPR Art.6(1)(f) legitimate-interest` per `docs/compliance.md` (social footprint = "Medium" risk). |
 
 **Why 15 platforms.** The curated set —
@@ -258,11 +259,16 @@ the first `MaxHandles` of them.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SOCIAL_FOOTPRINT_TIMEOUT` | `90s` | Per-handle Maigret subprocess bound (Go duration). On expiry that handle → `unknown`. |
-| `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` | Minimum spacing between consecutive per-lead checks on one `Validator` (the rate limiter). |
+| `SOCIAL_FOOTPRINT_TIMEOUT` | `90s` | Per-handle subprocess bound (Go duration). On expiry that handle → `unknown`. |
+| `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` (`15s` for `osintgram` if unset) | Minimum spacing between consecutive per-lead checks on one `Validator` (the rate limiter). |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` | Python interpreter to run the wrapper. |
 | `SOCIAL_FOOTPRINT_WRAPPER` | *(auto)* | Path to `wrapper/maigret_check.py`. Auto-located next to the binary or under the module dir; set explicitly if installed elsewhere. |
-| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use: `maigret`, `sherlock`, or `both` (consensus). |
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use: `maigret`, `sherlock`, `both` (consensus), or `osintgram` (optional Instagram depth). |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_HOME` | *(none)* | Path to a separate Osintgram checkout containing `main.py`. Required only for `osintgram` backend. |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_WRAPPER` | *(auto)* | Path to `wrapper/osintgram_check.py`. Auto-located next to the binary or under the module dir. |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_PYTHON` | `python3` / `SOCIAL_FOOTPRINT_PYTHON` | Python interpreter for the Osintgram wrapper. |
+| `HIKERAPI_TOKEN` | *(none)* | Optional HikerAPI token for headless Osintgram runs. |
+| `SOCIAL_FOOTPRINT_OSINTGRAM_CREDENTIALS` | *(none)* | Optional path to a `credentials.ini` file; otherwise Osintgram reads `config/credentials.ini` inside `SOCIAL_FOOTPRINT_OSINTGRAM_HOME`. |
 
 ## Sherlock backend (optional second engine)
 
@@ -292,33 +298,60 @@ pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-pr
 
 The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
 
-## Sherlock backend (optional second engine)
+## Osintgram backend (optional Instagram depth)
 
-In addition to Maigret, the module supports [Sherlock](https://github.com/sherlock-project/sherlock) (MIT) as a
-second backend. Sherlock maintains an independent site database, providing better cross-validation coverage.
+The module also supports [Osintgram](https://github.com/Datalux/Osintgram) as an
+**optional, opt-in Instagram depth backend**. It is **not** a default or
+replacement for Maigret: Maigret already checks Instagram presence in its
+curated list, while Osintgram performs a single, credentialed `info` lookup that
+can confirm privacy/verified/business flags and public-count signals.
+
+**License firewall:** Osintgram is GPL-3.0. This module never imports it as a
+Python library or vendors it as a package. The Go runner invokes a small MIT
+wrapper (`wrapper/osintgram_check.py`) that shells out to an operator-installed
+Osintgram checkout via `SOCIAL_FOOTPRINT_OSINTGRAM_HOME`. The platform core
+remains MIT.
 
 Select the backend via `SOCIAL_FOOTPRINT_BACKEND`:
 
 | Value | Behaviour |
 |---|---|
-| `maigret` (default) | Maigret only — existing behaviour, unchanged. Uses Maigret's curated 15-platform list. |
-| `sherlock` | Sherlock only via `wrapper/sherlock_check.py`. Uses Sherlock's curated 14-platform list. |
-| `both` | Maigret first over its 15-platform list, then Sherlock over its 14-platform list; Sherlock upgrades Maigret's `unknown` answers to definitive where possible; Maigret's definitive results are never downgraded. The reported `platform_count` is Maigret's 15; `sherlock_platform_count` is added to `metadata`. |
+| `osintgram` | Instagram-only check via Osintgram CLI, one handle at a time. `platform_count` is 1. |
 
-**Install:**
+**Allowed command surface:** `info` only. The wrapper hard-rejects all other
+Osintgram commands (`followers`, `fwersemail`, `photos`, `addrs`, etc.).
+
+**Minimal collection:** the normalized output contains only counts and boolean
+flags (`is_private`, `is_verified`, `is_business`, `has_public_email`,
+`follower_count`, etc.). Biography text, full email/phone strings, HD profile
+images, GPS/address data, and follower/following graphs are intentionally **not**
+retained.
+
+**Install (operator-side, not in requirements.txt because of GPL):**
+
 ```bash
-pip install -r requirements.txt    # now includes maigret==0.6.2 and sherlock-project==0.16.1
+# Clone Osintgram outside the monorepo
+git clone https://github.com/Datalux/Osintgram.git ~/osintgram
+cd ~/osintgram
+pip install -r requirements.txt
+
+# Auth: either set HIKERAPI_TOKEN (preferred for headless runs) or configure
+# config/credentials.ini inside the Osintgram checkout.
 ```
 
-**Optional env vars:**
+**Example run:**
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Which backend(s) to use |
-| `SOCIAL_FOOTPRINT_SHERLOCK_PYTHON` | Falls back to `SOCIAL_FOOTPRINT_PYTHON`, then `python3` | Python interpreter for Sherlock wrapper |
-| `SOCIAL_FOOTPRINT_SHERLOCK_WRAPPER` | *(auto-located)* | Explicit path to `wrapper/sherlock_check.py` |
+```bash
+export SOCIAL_FOOTPRINT_BACKEND=osintgram
+export SOCIAL_FOOTPRINT_OSINTGRAM_HOME="$HOME/osintgram"
+export HIKERAPI_TOKEN="..."
 
-The I/O contract, compliance guardrails (curated scope caps, no proxy, minimal collection), and audit format are identical across backends. `source_tool`, `metadata.platform_count`, and the confidence denominator change to reflect the active backend. Legal basis for all processing: GDPR Art.6(1)(f) legitimate interest.
+echo '{"email":"natgeo@example.com","company":"Demo"}' \
+  | ./bin/social-footprint
+```
+
+**Live test gate:** real Instagram checks are skipped unless both `-short` is
+absent and `SOCIAL_FOOTPRINT_LIVE_OSINTGRAM=1` is set.
 
 ## Test
 
@@ -340,7 +373,10 @@ make test-short # unit tests only: go test -count=1 -short ./...
 - The CLI test (`cmd/social-footprint`) covers the full stdin→stdout contract:
   the `skipped` path fully offline, and a real **subprocess** round-trip against a
   fake wrapper script (proving JSON parse + audit-redaction without needing a live
-  Maigret), plus the only non-zero-exit path (unreadable stdin).
+  Maigret or Osintgram), plus the only non-zero-exit path (unreadable stdin).
+- `osintgram_test.go` exercises the Osintgram wrapper with a fake `main.py`
+  fixture: command allowlist, missing-home degrade, not-found detection, synthetic
+  `*_info.json` normalization, and redaction of the raw public email string.
 - **Integration tests** are guarded by the `integration` build tag and never run
   under `go test ./...`:
 
@@ -349,7 +385,8 @@ make test-short # unit tests only: go test -count=1 -short ./...
   ```
 
   `maigret_integration_test.go` performs a live Maigret run and is skipped if
-  `python3` is unavailable.
+  `python3` is unavailable. Live Osintgram tests are skipped under `-short` and
+  behind `SOCIAL_FOOTPRINT_LIVE_OSINTGRAM=1`.
 
 The output shown above under **Run it** was additionally captured from a **live**
 run against the real embedded Maigret 0.6.2 during development.
@@ -364,4 +401,8 @@ run against the real embedded Maigret 0.6.2 during development.
   not shelled out to as a CLI. Neither needs API keys for username search; each
   wrapper loads the bundled site database (`data.json`) by default (no per-run
   auto-download).
+- **Osintgram** (optional, **GPL-3.0**) is intentionally **not** pinned as a pip
+  dependency of the MIT platform. It must be installed separately by the operator
+  and pointed to with `SOCIAL_FOOTPRINT_OSINTGRAM_HOME`. The wrapper shells out to
+  Osintgram's CLI and is the only point of contact with the GPL code.
 - The module functions with **zero API keys and no paid services**.

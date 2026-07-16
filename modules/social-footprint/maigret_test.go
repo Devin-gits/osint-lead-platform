@@ -229,4 +229,3 @@ trailing noise`
 		t.Errorf("checked_at = %q, want full top-level object to be captured", got.CheckedAt)
 	}
 }
-

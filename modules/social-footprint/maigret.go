@@ -40,10 +40,11 @@ const (
 
 // platformResult mirrors one entry of the wrapper's JSON "results" array.
 type platformResult struct {
-	Platform   string `json:"platform"`
-	Status     string `json:"status"`
-	URL        string `json:"url"`
-	HTTPStatus int    `json:"http_status"`
+	Platform   string            `json:"platform"`
+	Status     string            `json:"status"`
+	URL        string            `json:"url"`
+	HTTPStatus int               `json:"http_status"`
+	Instagram  *InstagramDetails `json:"instagram,omitempty"`
 }
 
 // wrapperOutput is the JSON contract the Python wrapper prints on stdout.

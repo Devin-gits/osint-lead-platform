@@ -64,6 +64,12 @@ const SourceTool = "soxoj/maigret@0.6.2 (embedded Python library via wrapper sub
 // other handles or crashing the pipeline.
 const DefaultTimeout = 90 * time.Second
 
+// Env var names referenced inside the package.
+const (
+	timeoutEnv     = "SOCIAL_FOOTPRINT_TIMEOUT"
+	minIntervalEnv = "SOCIAL_FOOTPRINT_MIN_INTERVAL"
+)
+
 // DefaultMinInterval is the minimum spacing enforced between consecutive per-lead
 // Check calls on the same Validator (the in-process rate limiter). It makes the
 // "rate-limited, per-lead spot check — never a bulk sweep" requirement a
@@ -77,13 +83,25 @@ const MaxHandles = 3
 
 // Backend constants — select via SOCIAL_FOOTPRINT_BACKEND env var.
 const (
-	BackendMaigret  = "maigret" // default
-	BackendSherlock = "sherlock"
-	BackendBoth     = "both" // consensus merge
+	BackendMaigret   = "maigret" // default
+	BackendSherlock  = "sherlock"
+	BackendBoth      = "both"      // consensus merge
+	BackendOsintgram = "osintgram" // optional Instagram depth; GPL-3.0 CLI subprocess only
 
 	// SourceToolSherlock identifies the Sherlock engine in audit records.
 	SourceToolSherlock = "sherlock-project/sherlock@0.16.1 (embedded Python library via wrapper subprocess)"
+
+	// SourceToolOsintgram identifies the Osintgram engine in audit records.
+	// Osintgram is GPL-3.0 and is invoked as a subprocess CLI only, never as an
+	// imported library, so the MIT platform code remains license-clean.
+	SourceToolOsintgram = "Datalux/Osintgram (GPL-3.0 CLI subprocess; command=info only)"
 )
+
+// DefaultOsintgramMinInterval is the recommended minimum spacing for the
+// Osintgram backend. Instagram is more aggressive about anti-automation than
+// Maigret's multi-site spot check, so the default is higher unless the operator
+// explicitly overrides it via SOCIAL_FOOTPRINT_MIN_INTERVAL.
+const DefaultOsintgramMinInterval = 15 * time.Second
 
 // statusOK / statusSkipped / statusUnknown are the module-level status values.
 // "skipped" means correctly nothing to check (no derivable handle); "unknown"
@@ -94,14 +112,33 @@ const (
 	statusUnknown = "unknown"
 )
 
+// InstagramDetails is the minimal, compliance-reviewed enrichment the Osintgram
+// backend may attach to an Instagram PlatformSignal. It contains only counts and
+// boolean flags; it deliberately omits biography text, full contact strings, HD
+// images, GPS, and follower/following graphs.
+type InstagramDetails struct {
+	UserID         string `json:"user_id,omitempty"`
+	IsPrivate      bool   `json:"is_private"`
+	IsVerified     bool   `json:"is_verified"`
+	IsBusiness     bool   `json:"is_business"`
+	FollowerCount  int    `json:"follower_count,omitempty"`
+	FollowingCount int    `json:"following_count,omitempty"`
+	MediaCount     int    `json:"media_count,omitempty"`
+	HasPublicEmail bool   `json:"has_public_email"`
+	CheckedVia     string `json:"checked_via"`
+}
+
 // PlatformSignal is one platform's result for one handle: whether the handle is
 // claimed/available/unknown on that platform, and (for a claimed hit) the public
-// profile URL. Deliberately no scraped profile fields — see package doc.
+// profile URL. Deliberately no scraped profile fields — see package doc. The
+// optional InstagramDetails field is used only by the Osintgram backend and is
+// omitted by Maigret/Sherlock.
 type PlatformSignal struct {
-	Platform   string `json:"platform"`
-	Status     string `json:"status"` // "claimed" | "available" | "unknown"
-	URL        string `json:"url,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	Platform   string            `json:"platform"`
+	Status     string            `json:"status"` // "claimed" | "available" | "unknown"
+	URL        string            `json:"url,omitempty"`
+	HTTPStatus int               `json:"http_status,omitempty"`
+	Instagram  *InstagramDetails `json:"instagram,omitempty"`
 }
 
 // HandleResult is the per-candidate-handle block: which platforms were checked
@@ -175,7 +212,14 @@ func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string)
 		timeout = DefaultTimeout
 	}
 	if minInterval <= 0 {
-		minInterval = DefaultMinInterval
+		// Instagram is more aggressive than the multi-site presence checkers, so
+		// Osintgram gets a higher default min interval unless the operator explicitly
+		// overrides it via SOCIAL_FOOTPRINT_MIN_INTERVAL.
+		if backend == BackendOsintgram && os.Getenv(minIntervalEnv) == "" {
+			minInterval = DefaultOsintgramMinInterval
+		} else {
+			minInterval = DefaultMinInterval
+		}
 	}
 
 	var runner maigretRunner
@@ -190,6 +234,9 @@ func NewValidatorWithBackend(timeout, minInterval time.Duration, backend string)
 			secondary: &sherlockRunner{},
 		}
 		platforms = curatedPlatforms
+	case BackendOsintgram:
+		runner = &osintgramRunner{}
+		platforms = []string{"Instagram"}
 	default: // BackendMaigret and unknown values
 		backend = BackendMaigret
 		runner = &subprocessRunner{}
@@ -214,6 +261,8 @@ func (v *Validator) sourceTool() string {
 		return SourceToolSherlock
 	case BackendBoth:
 		return SourceTool + " + " + SourceToolSherlock + " consensus"
+	case BackendOsintgram:
+		return SourceToolOsintgram
 	default:
 		return SourceTool
 	}
@@ -225,6 +274,9 @@ func (v *Validator) rateLimitNote() string {
 	scopeNote := "curated " + strconv.Itoa(len(v.platforms)) + "-platform allow-list"
 	if v.backend == BackendBoth {
 		scopeNote = "Maigret " + scopeNote + " + Sherlock " + strconv.Itoa(len(sherlockCuratedPlatforms)) + "-platform allow-list"
+	}
+	if v.backend == BackendOsintgram {
+		scopeNote = "Instagram single-platform allow-list (Osintgram command=info only)"
 	}
 	return "per-lead rate-limited spot check (min " + v.limiter.interval().String() +
 		" between leads, exponential backoff on consecutive errors); scope hard-capped to a " + scopeNote +
