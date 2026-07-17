@@ -40,6 +40,7 @@ HTTP status codes:
 | Code | When |
 |------|------|
 | `200` | Success (GET/POST) |
+| `201` | `POST /api/leads` created |
 | `202` | `POST /api/pipelines/run` accepted — poll `GET /api/runs/{id}` |
 | `400` | Bad request / missing required query or body field |
 | `404` | Resource not found (`lead`, `module`, `run`) |
@@ -289,6 +290,50 @@ export interface PipelineRun {
 
 ## 3. Endpoint definitions
 
+Path parameters use Go 1.22 `http.ServeMux` brace syntax (`{id}`, `{name}`).
+
+All lead responses are produced by `leadToJSON`: module result keys are flattened to the top level (e.g. `email_validate`, `domain_intel`) and the internal `Results` map is never exposed. `audit_events` are included only on detail endpoints.
+
+### `POST /api/leads`
+
+Create a lead. Body fields match `RawLead`.
+
+**Request body**
+
+```json
+{
+  "name": "Jane Doe",
+  "email": "support@github.com",
+  "phone": "+14155551212",
+  "company": "GitHub",
+  "domain": "github.com",
+  "source_id": "cmp-001",
+  "permission_ref": "perm-2026-001"
+}
+```
+
+**Response `201`**
+
+Returns the created `LeadRecord` (module keys flattened to the top level; `audit_events` not included).
+
+```json
+{
+  "data": {
+    "id": "lead-001",
+    "stage": "raw",
+    "risk_level": "unknown",
+    "name": "Jane Doe",
+    "email": "support@github.com",
+    "company": "GitHub",
+    "domain": "github.com",
+    "source_id": "cmp-001",
+    "permission_ref": "perm-2026-001",
+    "created_at": "2026-07-13T13:00:00Z",
+    "updated_at": "2026-07-13T13:00:00Z"
+  }
+}
+```
+
 ### `GET /api/leads`
 
 List leads with optional filters and pagination.
@@ -328,7 +373,7 @@ Response type: `ApiResponse<LeadSummary[]>`. `audit_events` is not included in l
 }
 ```
 
-### `GET /api/leads/[id]`
+### `GET /api/leads/{id}`
 
 Return a single `LeadRecord` with `audit_events` hydrated.
 
@@ -375,6 +420,37 @@ Return a single `LeadRecord` with `audit_events` hydrated.
 }
 ```
 
+### `POST /api/leads/{id}/run`
+
+Run one or more modules on a single lead. Returns the full `LeadRecord` with `audit_events` hydrated after the run.
+
+**Request body**
+
+```json
+{
+  "modules": ["email-validate", "domain-intel"],
+  "permission_ref": "perm-2026-001",
+  "legal_basis": "GDPR Art.6(1)(f) legitimate-interest"
+}
+```
+
+`modules` is required. `permission_ref` and `legal_basis` are optional; they default to the lead's stored `permission_ref` and GDPR Art.6(1)(f) legitimate interest.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "id": "lead-001",
+    "stage": "validated",
+    "risk_level": "low",
+    "email_validate": { "status": "ok", ... },
+    "domain_intel": { "status": "ok", ... },
+    "audit_events": [ ... ]
+  }
+}
+```
+
 ### `GET /api/modules`
 
 Return all modules with dev status and metadata.
@@ -401,7 +477,7 @@ Return all modules with dev status and metadata.
 }
 ```
 
-### `GET /api/modules/[name]`
+### `GET /api/modules/{name}`
 
 Return a single `ModuleDetail` (`ModuleInfo` plus optional documentation).
 
@@ -475,6 +551,29 @@ Return `PipelineRun` timeline.
 }
 ```
 
+### `GET /api/runs/{id}`
+
+Return a single `PipelineRun` by ID.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "id": "run-001",
+    "type": "batch",
+    "started_at": "2026-07-13T10:00:00Z",
+    "finished_at": "2026-07-13T10:05:00Z",
+    "status": "completed",
+    "lead_ids": ["lead-001", "lead-002"],
+    "modules_executed": ["email-validate", "domain-intel"],
+    "audit_event_ids": ["evt-001", "evt-002"],
+    "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+    "permission_refs": ["perm-2026-001", "perm-2026-002"]
+  }
+}
+```
+
 ### `GET /api/compliance/summary`
 
 Return structured compliance content derived from `docs/compliance.md`.
@@ -514,7 +613,7 @@ Return structured compliance content derived from `docs/compliance.md`.
 
 ### `POST /api/pipelines/run`
 
-Batch run endpoint. Runs the requested modules against each lead sequentially in the same request. Returns `202 Accepted` immediately; the client should poll `GET /api/runs/{id}` for completion.
+Batch run endpoint. Accepts a list of lead IDs and modules, creates a `PipelineRun`, executes the modules against each lead sequentially in the same request, and returns `202 Accepted` with the run ID. The run is updated to `completed` or `partial` before the response is sent, so the UI may immediately navigate to `/runs/{run_id}` or poll `GET /api/runs/{id}` as a future-proof pattern.
 
 **Request body**
 

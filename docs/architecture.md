@@ -24,6 +24,8 @@ Ad / Website →  │  Ingest           │  raw lead: name, email, phone, compa
 
 The `services/control-plane` Go HTTP API is the current orchestrator. It persists leads, runs, audit events, and modules to Postgres (or an in-memory fallback) and invokes the module libraries defined in `modules/<name>/`.
 
+The current stage machine: `raw → enriched` (domain/extraction/company when `ok`) → `validated` (email/phone/social when `ok`). `crm_ready` is reserved and not assigned yet. Risk is computed from `email_validate` and `phone_validate` heuristics only (`runner.computeRisk`).
+
 ## Module contract
 
 Every module in `modules/<name>/` should expose a single well-defined constructor/function:

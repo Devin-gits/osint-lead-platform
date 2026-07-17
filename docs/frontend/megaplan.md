@@ -132,7 +132,7 @@ export const tokens = {
 | `Table` | Compact data tables; sticky headers |
 | `Tabs` | Lead detail, module detail tab panels |
 | `Modal` / `Dialog` | Confirmation shells, audit expand |
-| `Toast` | User-facing feedback (e.g. “Orchestrator not wired”) |
+| `Toast` | User-facing feedback (e.g. "Run started — view /runs/{run_id}") |
 | `Tooltip` | Icon-only buttons and metadata hints |
 | `Skeleton` | Loading placeholders for cards/tables |
 | `EmptyState` | No results / module not run |
@@ -140,7 +140,7 @@ export const tokens = {
 | `StatusChip` | `ok | unknown | skipped | pending | not_run` |
 | `PipelineStepper` | Funnel: raw → enriched → validated → crm_ready |
 | `AuditLogPanel` | Collapsible timeline of `AuditEvent`; expands `raw_stderr_json` |
-| `EnvironmentBadge` | Shows live API connectivity and sandbox/production badge |
+| `EnvironmentBanner` | Shows live API connectivity and sandbox/production badge |
 
 ---
 
@@ -266,6 +266,9 @@ export type ModuleDevStatus =
   | "in_development"
   | "planned"
   | "not_configured";
+
+// The v1 registry currently marks modules as "available" or "planned";
+// "in_development" is reserved for future use.
 
 export interface ModuleInfo {
   name:
@@ -418,7 +421,7 @@ Error envelope:
 +--------------------------------------------------+
 | ┌----------------┐ ┌----------------┐ …            |
 | | email-validate | | domain-intel   |              |
-| | available      | | in_development |              |
+| | available      | | available      |              |
 | | Validate       | | Ingest         |              |
 | └----------------┘ └----------------┘              |
 +--------------------------------------------------+
@@ -525,8 +528,8 @@ When wiring a new module in a future PR:
 - [ ] Sidebar navigation works across `/leads`, `/modules`, `/runs`, `/compliance`, `/settings`.
 - [ ] Leads list fetches from `/api/leads`, supports filters, stage funnel, and bulk available-module actions.
 - [ ] Lead detail fetches from `/api/leads/{id}`, displays raw fields, module result tabs with structured Domain/Social panels, and `AuditLogPanel` with `legal_basis` and `raw_stderr_json` visible.
-- [ ] `/modules` groups modules by `available` / `in_development` / `planned` and `/modules/[name]` renders docs from the registry.
-- [ ] `/runs` lists live `PipelineRun`s and `/runs/[id]` shows run detail linked to leads.
+- [ ] `/modules` groups modules by `available` / `in_development` / `planned` (the registry currently uses `available` and `planned`; `in_development` is reserved) and `/modules/{name}` renders docs from the registry.
+- [ ] `/runs` lists live `PipelineRun`s and `/runs/{id}` shows run detail linked to leads.
 - [ ] `/compliance` shows hard rules, risk table, checklist, and exclusions from `/api/compliance/summary`.
 - [ ] `/settings` includes environment badge, role selector, and stub connectors.
 - [ ] `POST /api/leads/{id}/run` and `POST /api/pipelines/run` call the control-plane API and return updated lead / accepted run.

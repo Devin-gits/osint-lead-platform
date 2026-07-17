@@ -133,7 +133,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 - **Social top-level status** can be `"ok"` even when every individual handle is `"unknown"` because the runner only degrades the lead if the module itself errors; the UI panel renders per-handle status chips.
 - **Multi-handle duration** can exceed the default HTTP write timeout; operators must raise `HTTP_WRITE_TIMEOUT`.
 - **crm_ready stage** is not set by the current stage machine; leads stop at `validated`.
-- **Risk scoring** is not computed from module signals; `risk_level` remains `unknown` unless a future policy assigns it.
+- **Risk is computed from email + phone only** via `runner.computeRisk()`; `domain_intel` and `social_footprint` do not affect `risk_level` today. `risk_score` is stored if present but is not a composite algorithm field.
 - **Compliance summary** is static governance content (hard rules, risk table, checklist, exclusions). It does not yet return numeric stats or per-run scores.
 - **Async long runs** are not supported; batch runs execute synchronously inside the HTTP request.
 
@@ -142,7 +142,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 ## Backlog for v2 and beyond
 
 - `crm_ready` stage policy and CRM export trigger.
-- Risk scoring derived from email/phone/domain/social signals.
+- Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
 - `extraction` and `company-enrich` wiring.
 - Async worker for long-running Maigret/theHarvester batch jobs.
 - Retention/deletion enforcement in the backend.
