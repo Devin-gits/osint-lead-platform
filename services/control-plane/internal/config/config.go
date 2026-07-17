@@ -25,10 +25,10 @@ func Load() (*Config, error) {
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		Port:              os.Getenv("PORT"),
 		CORSOrigin:        os.Getenv("CORS_ORIGIN"),
-		ModuleTimeout:     10 * time.Second,
+		ModuleTimeout:     90 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
 	}
 
 	if cfg.Port == "" {

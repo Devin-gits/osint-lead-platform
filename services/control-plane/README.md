@@ -28,7 +28,7 @@ leads, audit events, and pipeline runs.
 | `DATABASE_URL` | — | Postgres URL, e.g. `postgres://user:pass@localhost/osint?sslmode=disable` |
 | `PORT` | `8080` | HTTP port |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
-| `MODULE_TIMEOUT` | `10s` | Per-module timeout |
+| `MODULE_TIMEOUT` | `90s` | Per-module/sub-handle timeout (raise this for slow networks or many handles) |
 | `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
 | `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Backend selector: `maigret`, `sherlock`, `both`, or `osintgram` |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` (on PATH) | Python interpreter used to run the wrapper |
