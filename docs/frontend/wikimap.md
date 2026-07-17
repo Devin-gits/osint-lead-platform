@@ -39,7 +39,7 @@
                    v
 +----------------------------------+
 |  App Shell (Sidebar + TopBar +   |
-|  Footer + MockDataBanner)        |
+|  Footer + APIStatusBanner)       |
 +----------------------------------+
 ```
 
@@ -63,14 +63,14 @@
 
 ## 3. Screen → API endpoint → hook
 
-| Screen | Route handler | TanStack Query hook | Key components |
-|--------|---------------|---------------------|----------------|
+| Screen | Control-plane endpoint | TanStack Query hook | Key components |
+|--------|------------------------|---------------------|----------------|
 | `/leads` | `GET /api/leads` | `useLeads` | `LeadFilters`, `StageFunnel`, `LeadTable` |
-| `/leads/[id]` | `GET /api/leads/[id]` | `useLead` | `LeadDetailTabs`, `AuditLogPanel` |
+| `/leads/[id]` | `GET /api/leads/{id}` | `useLead` | `LeadDetailTabs`, `AuditLogPanel` |
 | `/modules` | `GET /api/modules` | `useModules` | `ModuleGrid` |
-| `/modules/[name]` | `GET /api/modules/[name]` | `useModule` | `ModuleDetailTabs`, `ModuleDocsPanel` |
+| `/modules/[name]` | `GET /api/modules/{name}` | `useModule` | `ModuleDetailTabs`, `ModuleDocsPanel` |
 | `/runs` | `GET /api/runs` | `useRuns` | `RunTimeline` |
-| `/runs/[id]` | `GET /api/runs` (filtered locally) | `useRun(id)` | `RunDetail` |
+| `/runs/[id]` | `GET /api/runs/{id}` | `useRun(id)` | `RunDetail` |
 | `/compliance` | `GET /api/compliance/summary` | `useComplianceSummary` | `HardRules`, `RiskTable`, `PreRunChecklist`, `ExclusionsCallout` |
 | `/settings` | none (local state) | none | `RoleSelector`, `EnvironmentSetting`, stub components |
 
@@ -90,15 +90,14 @@ User action (filter, click, tab change)
         ▼
   API client (lib/api/client.ts)
         │
-   ┌────┴────┐
-   │         │
-   ▼         ▼
-fetch('/api/*')   fallback: lib/mocks/seed.ts
-   │                 (for static export / no server)
-   ▼
-Next.js route handler
-   ▼
-lib/mocks/seed.ts
+        ▼
+fetch(`${NEXT_PUBLIC_API_BASE_URL}/api/*`)
+        │
+        ▼
+services/control-plane API
+        │
+        ▼
+Postgres (or in-memory store)
 ```
 
 ---
@@ -110,7 +109,7 @@ lib/mocks/seed.ts
 | Server data | TanStack Query | In-memory cache | Leads, modules, runs, audit, compliance |
 | UI role | Zustand (`lib/store/ui.ts`) | localStorage | `sales | admin | risk` stub |
 | Sidebar open | Zustand | localStorage | Mobile/desktop sidebar toggle |
-| Environment badge | Zustand | localStorage | `Sandbox | Production stub` |
+| Environment badge | Zustand | localStorage | `Sandbox | Production` stub; actual target URL comes from `NEXT_PUBLIC_API_BASE_URL` |
 | Pre-run checklist | Zustand | session only | Interactive compliance checkboxes |
 | Filters | URL search params + Zustand | URL | Shareable filtered list views |
 
@@ -119,11 +118,11 @@ lib/mocks/seed.ts
 ## 6. Key design constraints (compliance & product)
 
 - Every lead screen shows `permission_ref` and `legal_basis`.
-- Social footprint shows only `platform`, `handle`, `confidence`, `url`.
+- Social footprint shows only `platform`, `handle`, `status` (claimed/available/unknown), and `confidence`.
 - No breach/leak signals in sales views; role stub exists for future admin/risk gating.
 - No LinkedIn scraping, reverse-image, or GHunt-style modules exposed.
-- Mock data banner is persistent and non-dismissible.
-- `POST /api/pipelines/run` returns `501`/stub; UI toasts “Orchestrator not wired”.
+- API status banner reflects live connectivity to `NEXT_PUBLIC_API_BASE_URL`.
+- `POST /api/pipelines/run` returns `202` with a `run_id`; UI links to `/runs/{run_id}` and may poll for completion.
 
 ---
 
@@ -131,10 +130,9 @@ lib/mocks/seed.ts
 
 - **App shell** → `components/layout/*`
 - **Design tokens** → `lib/theme/tokens.ts`
-- **Mock data** → `lib/mocks/seed.ts`
-- **API contracts** → `app/api/**` and `lib/api/client.ts`
+- **API contracts** → `lib/api/types.ts` and `lib/api/client.ts`
 - **Leads domain** → `app/leads/**`, `components/leads/**`
-- **Modules domain** → `app/modules/**`, `components/modules/**`, `content/docs/**`
+- **Modules domain** → `app/modules/**`, `components/modules/**`
 - **Runs domain** → `app/runs/**`, `components/runs/**`
 - **Compliance domain** → `app/compliance/**`, `components/compliance/**`
 - **Settings domain** → `app/settings/**`, `components/settings/**`

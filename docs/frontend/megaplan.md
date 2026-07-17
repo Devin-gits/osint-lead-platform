@@ -16,16 +16,15 @@
   - inspect per-module results and the full compliance audit trail;
   - manage module status/configuration placeholders until real orchestration exists.
 - Surface only compliant, non-sensitive data in sales views.
-- Provide a mock API layer (Next.js App Router route handlers) that mirrors the planned backend contract, plus a client-side seed fallback so the app can run in static-export mode if ever needed.
+- Consume the live `services/control-plane` API at `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`); no mock Next.js route handlers or `seed.ts` product path.
 - Ship PR-by-PR, one concern per PR, with build/type/lint gates.
 
 ### Non-goals
 
-- No real orchestration backend, no SpiderFoot glue, no custom Go orchestrator.
-- No live module execution from the UI.
 - No LinkedIn scraping, reverse-image, GHunt-style tooling, or breach/leak signal surfaced to sales.
-- No auth/SSO integration in PRs 1–4 (only local role stubs).
+- No auth/SSO integration in v1 (only local role stubs).
 - No real secrets storage or CRM connector wiring.
+- No extraction/company-enrich wiring (deferred to a future PR).
 
 ---
 
@@ -59,7 +58,7 @@
 - **Top bar:** product name “OSINT Lead Console”, environment badge (`Sandbox | Production stub`), user avatar stub, search stub.
 - **Content area:** max-width container, dark theme only for v1.
 - **Footer strip:** legal-basis reminder + link to `/compliance`.
-- **Mock data banner:** persistent, non-dismissible: `Mock data — backend not wired yet`.
+- **API status banner:** shows live connectivity to `NEXT_PUBLIC_API_BASE_URL`.
 
 ---
 
@@ -141,7 +140,7 @@ export const tokens = {
 | `StatusChip` | `ok | unknown | skipped | pending | not_run` |
 | `PipelineStepper` | Funnel: raw → enriched → validated → crm_ready |
 | `AuditLogPanel` | Collapsible timeline of `AuditEvent`; expands `raw_stderr_json` |
-| `MockDataBanner` | Persistent non-dismissible mock-data notice |
+| `EnvironmentBadge` | Shows live API connectivity and sandbox/production badge |
 
 ---
 
@@ -165,7 +164,7 @@ export type ModuleStatus = "ok" | "unknown" | "skipped" | "pending" | "not_run";
 
 /** Raw ingest fields — never overwritten by modules */
 export interface RawLead {
-  id: string; // UI/mock id; real backend may use UUID
+  id: string; // UUID assigned by services/control-plane
   name?: string;
   email?: string;
   phone?: string; // prefer E.164
@@ -317,13 +316,13 @@ export interface PipelineRun {
 ### Type notes for implementation
 
 - `permission_ref` is optional on `RawLead` / `LeadRecord`; the UI renders a warning chip when it is missing.
-- `DomainIntelResult`, `PhoneValidateResult`, and `SocialFootprintResult` are thin UI projections for v1 mock data. Future real module output may include extra namespaced sub-fields; these will be appended under the same namespaced key without breaking the top-level contract.
+- `DomainIntelResult` and `SocialFootprintResult` contain the real nested structures returned by the live modules (DNS/SSL/HTTP/WHOIS, theHarvester, handle results, platform signals). `PhoneValidateResult` remains a flat summary. All module results live under their namespaced key on `LeadRecord`.
 
 ---
 
-## 6. Mock API contract (Next.js App Router route handlers)
+## 6. Live API contract (`services/control-plane`)
 
-All routes live under `ui/web-console/app/api/`. Base response envelope:
+The UI consumes the Go API running at `NEXT_PUBLIC_API_BASE_URL`. Base response envelope:
 
 ```ts
 { data: T, meta?: { page, page_size, total } }
@@ -339,16 +338,18 @@ Error envelope:
 |--------|------|--------------|----------|-------|
 | `GET` | `/api/leads` | `?stage=&risk=&module_status=&q=&page=&page_size=` | `{ data: LeadSummary[], meta }` | Full-text search over name/email/company/domain; `module_status` matches any namespaced module status (missing key = `not_run`) |
 | `GET` | `/api/leads/[id]` | — | `{ data: LeadRecord }` | Includes `audit_events` |
-| `GET` | `/api/modules` | — | `{ data: ModuleInfo[] }` | Seed statuses per PR3 |
-| `GET` | `/api/modules/[name]` | — | `{ data: ModuleDetail }` | `docs` is static markdown for `email-validate`, placeholder for others |
-| `GET` | `/api/audit` | `?module=&lead_id=&page=&page_size=` | `{ data: AuditEvent[], meta }` | Always includes `legal_basis` |
-| `GET` | `/api/runs` | — | `{ data: PipelineRun[] }` | Timeline of mock runs |
-| `GET` | `/api/compliance/summary` | — | `{ data: { hard_rules, risk_table, checklist, exclusions } }` | Structured JSON from `docs/compliance.md` |
-| `POST` | `/api/pipelines/run` | `{ lead_ids[], modules[], permission_ref, legal_basis? }` | `501` or `{ data: { accepted: true, run_id } }` | Stub only; UI toasts “Orchestrator not wired” |
+| `GET` | `/api/modules` | — | `{ data: ModuleInfo[] }` | Real statuses from `services/control-plane/internal/registry` |
+| `GET` | `/api/modules/[name]` | — | `{ data: ModuleDetail }` | `docs` is Markdown from the registry |
+| `GET` | `/api/audit` | `?module=&status=&page=&page_size=` | `{ data: AuditEvent[], meta }` | Always includes `legal_basis` |
+| `GET` | `/api/runs` | — | `{ data: PipelineRun[] }` | Live run timeline |
+| `GET` | `/api/runs/[id]` | — | `{ data: PipelineRun }` | Single run detail |
+| `GET` | `/api/compliance/summary` | — | `{ data: { hard_rules, risk_table, checklist, exclusions } }` | Static governance content from `docs/compliance.md` |
+| `POST` | `/api/leads/[id]/run` | `{ modules[], permission_ref?, legal_basis? }` | `{ data: LeadRecord }` | Runs modules on a single lead |
+| `POST` | `/api/pipelines/run` | `{ lead_ids[], modules[], permission_ref?, legal_basis? }` | `202 { data: { accepted: true, run_id } }` | Batch run; poll `GET /api/runs/[id]` |
 
-### Client fallback
+### API client
 
-`lib/api/client.ts` first tries `fetch('/api/...')` against the running Next.js server. If the route is unavailable (dev server not reachable), it imports `lib/mocks/seed.ts` and filters/sorts locally as a resilience fallback. `output: 'export'` is not enabled in PR1 and is not a production target in v1.
+`lib/api/client.ts` fetches from `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`). There is no local Next.js `/api/*` route handler fallback or `lib/mocks/seed.ts` product path. The UI requires the control-plane server to be running.
 
 ---
 
@@ -366,7 +367,7 @@ Error envelope:
 | A |  | filters    |  | table                  |  |
 | D |  +------------+  +------------------------+  |
 | S |                                              |
-|   |  Mock data — backend not wired yet           |
+|   |  API status: connected to :8080              |
 +---+----------------------------------------------+
 | footer: legal basis reminder  |  Compliance →   |
 +--------------------------------------------------+
@@ -468,131 +469,36 @@ Error envelope:
 
 ---
 
-## 8. PR sequence & file paths
+## 8. v1 status: completed vs backlog
 
-### Branch / PR naming
+### Completed (merged)
 
-| PR | Branch | Title |
-|----|--------|-------|
-| 0 | `docs/frontend-megaplan` | `docs: frontend megaplan and API contracts` |
-| 1 | `feature/ui-web-console-scaffold` | `feat(ui): web-console scaffold and design system` |
-| 2 | `feature/ui-leads-mock-api` | `feat(ui): leads list and detail with mock API` |
-| 3 | `feature/ui-modules-dashboard` | `feat(ui): modules dashboard` |
-| 4 | `feature/ui-runs-compliance-settings` | `feat(ui): runs, compliance, settings` |
+- UI scaffold, design tokens, app shell, sidebar, dark theme.
+- Live API client/hooks wired to `services/control-plane` at `NEXT_PUBLIC_API_BASE_URL`.
+- `/leads` list with filters, stage funnel, permission-ref warnings, multi-select bulk runs, and live pagination.
+- `/leads/[id]` detail with raw fields, module result tabs, per-module run actions, structured Domain/Social panels, and `AuditLogPanel`.
+- `/modules` grid grouped by availability and `/modules/[name]` detail.
+- `/runs` and `/runs/[id]` timeline + detail.
+- `/compliance` static governance view.
+- Bulk-actions bar derives available modules from `/api/modules`.
+- Control-plane CI workflow (`.github/workflows/control-plane.yml`) and timeout env hardening (`HTTP_READ_TIMEOUT`, `HTTP_WRITE_TIMEOUT`, per-module runner timeout policy).
 
-### PR0 — Planning docs only
+### Backlog / deferred
 
-Files:
-- `docs/frontend/megaplan.md`
-- `docs/frontend/api-contracts.md`
-- `docs/frontend/codemap.md`
+- **crm_ready stage policy:** the stage machine advances to `validated` but has no explicit `crm_ready` transition yet.
+- **Risk scoring from domain/social signals:** `risk_score` is not computed beyond the existing `low | medium | high | unknown` labels.
+- **extraction / company-enrich wiring:** both modules are `planned` in the registry and not executable.
+- **Async long-run jobs:** long Maigret/theHarvester runs currently run inside the synchronous HTTP request. If HTTP write timeouts become a bottleneck, batch runs may move to an async worker.
 
-No UI code. Human review of the plan before PR1 starts.
+### One-module-at-a-time rule for future modules
 
-### PR1 — Scaffold + design system + app shell
-
-Files (under `ui/web-console/`):
-- `package.json`
-- `tsconfig.json`
-- `next.config.ts`
-- `tailwind.config.ts`
-- `postcss.config.mjs`
-- `eslint.config.mjs` (or `.eslintrc.json`)
-- `README.md`
-- `app/layout.tsx`
-- `app/page.tsx` (redirect to `/leads`)
-- `app/leads/page.tsx`
-- `app/modules/page.tsx`
-- `app/runs/page.tsx`
-- `app/compliance/page.tsx`
-- `app/settings/page.tsx`
-- `components/layout/Sidebar.tsx`
-- `components/layout/TopBar.tsx`
-- `components/layout/Footer.tsx`
-- `components/ui/Button.tsx`
-- `components/ui/IconButton.tsx`
-- `components/ui/Input.tsx`
-- `components/ui/Select.tsx`
-- `components/ui/Textarea.tsx`
-- `components/ui/Card.tsx`
-- `components/ui/Badge.tsx`
-- `components/ui/Table.tsx`
-- `components/ui/Tabs.tsx`
-- `components/ui/Dialog.tsx`
-- `components/ui/Toast.tsx` (or toast provider)
-- `components/ui/Tooltip.tsx`
-- `components/ui/Skeleton.tsx`
-- `components/ui/EmptyState.tsx`
-- `components/ui/PageHeader.tsx`
-- `components/ui/StatusChip.tsx`
-- `components/ui/PipelineStepper.tsx`
-- `components/ui/AuditLogPanel.tsx`
-- `components/ui/MockDataBanner.tsx`
-- `lib/theme/tokens.ts`
-- `lib/utils/cn.ts` (Tailwind class merge utility)
-- `public/` (favicon, maybe logo placeholder)
-
-### PR2 — Types + mock API + leads
-
-Files:
-- `lib/api/types.ts`
-- `lib/mocks/seed.ts`
-- `lib/api/client.ts` (fetch-first with seed fallback)
-- `lib/api/hooks.ts` (TanStack Query hooks: `useLeads`, `useLead`)
-- `app/api/leads/route.ts`
-- `app/api/leads/[id]/route.ts`
-- `app/api/audit/route.ts`
-- `app/api/runs/route.ts`
-- `app/api/compliance/summary/route.ts`
-- `app/api/pipelines/run/route.ts`
-- `app/leads/page.tsx` (list + filters + funnel)
-- `app/leads/[id]/page.tsx` (detail)
-- `components/leads/LeadFilters.tsx`
-- `components/leads/StageFunnel.tsx`
-- `components/leads/LeadTable.tsx`
-- `components/leads/LeadDetailTabs.tsx`
-- `components/leads/EmailResultCard.tsx`
-- `components/leads/PhoneResultCard.tsx`
-- `components/leads/DomainResultCard.tsx`
-- `components/leads/SocialResultCard.tsx`
-- `components/leads/RawLeadCard.tsx`
-- `components/leads/EnrichedCard.tsx`
-
-### PR3 — Modules dashboard
-
-Files:
-- `app/api/modules/route.ts`
-- `app/api/modules/[name]/route.ts`
-- `app/modules/page.tsx`
-- `app/modules/[name]/page.tsx`
-- `content/docs/email-validate.md`
-- `components/modules/ModuleGrid.tsx`
-- `components/modules/ModuleDetailTabs.tsx`
-- `components/modules/ModuleDocsPanel.tsx`
-- `components/modules/ModuleConfigPanel.tsx`
-- `components/modules/ModuleHealthPanel.tsx`
-
-### PR4 — Runs, compliance, settings, polish
-
-Files:
-- `app/runs/page.tsx`
-- `app/runs/[id]/page.tsx` (optional)
-- `app/compliance/page.tsx`
-- `app/settings/page.tsx`
-- `components/runs/RunTimeline.tsx`
-- `components/runs/RunDetail.tsx`
-- `components/compliance/HardRules.tsx`
-- `components/compliance/RiskTable.tsx`
-- `components/compliance/PreRunChecklist.tsx`
-- `components/compliance/ExclusionsCallout.tsx`
-- `components/settings/EnvironmentSetting.tsx`
-- `components/settings/RoleSelector.tsx`
-- `components/settings/CrmConnectorStub.tsx`
-- `components/settings/SsoOidStub.tsx`
-- `components/settings/ApiKeysVaultStub.tsx`
-- `lib/utils/risk.ts` (unit-tested helpers: risk label, score color)
-- `lib/utils/stage.ts` (unit-tested helpers: stage label, step index)
-- `__tests__/...` or `vitest`/`playwright` smoke test setup
+When wiring a new module in a future PR:
+1. Add the module as a `go.mod` replace in `services/control-plane`, import it in `internal/runner/runner.go`, map its result and `AuditRecord`s, and add/adapt runner tests.
+2. Update `internal/registry/registry.go` to `available` and document the module's behavior.
+3. Update `ui/web-console/lib/api/types.ts` with the namespaced result type.
+4. Add or extend the lead detail panel to render the new result.
+5. Update `services/control-plane/README.md` and `ui/web-console/README.md` with env/runtime requirements.
+6. Do not touch `modules/<name>/` source code unless the module contract itself needs changing.
 
 ---
 
@@ -600,64 +506,31 @@ Files:
 
 | Risk / question | Impact | Mitigation / tracking |
 |-----------------|--------|-----------------------|
-| Real auth/SSO not designed | PR5+ | Add `RoleSelector` local-state stub now; no backend gate |
-| Storage/retention policy undefined | PR5+ | Settings retention stub; no real data persistence in UI |
-| Risk scoring algorithm undefined | PR2+ | Keep `risk_score` optional and UI-only; derive from flags |
-| Static export vs server runtime | PR1+ | Route handlers + seed fallback covers both |
-| TanStack Query v5 vs v4 | PR1+ | Pin `@tanstack/react-query@5.x` |
-| Dependency license scanning | PR1+ | Only MIT-compatible libraries; review before each PR |
-| Real orchestration API contract may drift | PR5+ | `api-contracts.md` is the freeze; versioned updates |
-| Accessibility / keyboard nav | PR4+ | Built into component base; explicit a11y pass in PR4 |
+| Real auth/SSO not designed | v2 | `RoleSelector` local-state stub exists; no backend gate |
+| Storage/retention policy undefined | v2 | Settings retention stub; backend enforces retention |
+| Risk scoring algorithm undefined | v2 | Keep `risk_score` optional and UI-only; derive from module flags in a future PR |
+| Long Maigret/theHarvester runs block HTTP request | v1+ | Raise `HTTP_WRITE_TIMEOUT`; consider async batch worker if still limiting |
+| TanStack Query v5 vs v4 | v1 | Pin `@tanstack/react-query@5.x` |
+| Dependency license scanning | ongoing | Only MIT-compatible libraries; review before each PR |
+| API contract drift between UI and control-plane | v1+ | `api-contracts.md` is the live freeze; versioned updates |
+| Accessibility / keyboard nav | v1 | Built into component base; explicit a11y pass in future PR |
 
 ---
 
-## 10. Acceptance criteria per PR
-
-### PR0
-
-- [ ] `docs/frontend/megaplan.md` contains all 11 required sections.
-- [ ] `docs/frontend/api-contracts.md` freezes TS types and endpoint shapes.
-- [ ] `docs/frontend/codemap.md` maps planned files and conventions.
-- [ ] No code or `modules/**` changes.
-
-### PR1
+## 10. v1 acceptance criteria
 
 - [ ] `npm install` and `npm run build` succeed with zero errors.
 - [ ] `npm run typecheck` and `npm run lint` pass.
 - [ ] App shell renders with the dark corporate palette (`#050816`, cyan accents).
 - [ ] Sidebar navigation works across `/leads`, `/modules`, `/runs`, `/compliance`, `/settings`.
-- [ ] `MockDataBanner` is visible and non-dismissible.
-- [ ] All base UI components render in a style guide / placeholder page without runtime errors.
-- [ ] `README.md` includes `npm i && npm run dev`, Node version, and architecture note.
-- [ ] No touch of `modules/**`, Go files, evaluations.
-
-### PR2
-
-- [ ] `lib/api/types.ts` matches the exact types in this plan.
-- [ ] Mock seed has ≥ 12 leads across all stages, ≥ 1 full `email_validate` matching the module README (`support@github.com` style), ≥ 1 `unknown` with error, ≥ 1 missing phone/domain, `source_id`/`permission_ref` on most leads.
-- [ ] `/api/leads` and `/api/leads/[id]` return `{ data }` envelopes and consistent errors.
-- [ ] TanStack Query hooks `useLeads` and `useLead` fetch and cache data.
-- [ ] Leads list supports filters (stage, risk, module status, free-text) and shows stage funnel counts.
-- [ ] Lead detail displays raw fields, module result tabs, and `AuditLogPanel` with `legal_basis` visible.
-- [ ] Mock-data badge present.
-- [ ] No `modules/**` changes.
-
-### PR3
-
-- [ ] `/modules` grid shows 6 modules with seed dev statuses.
-- [ ] `/modules/email-validate` Documentation tab renders static markdown content.
-- [ ] Configuration and Health tabs are disabled/placeholder.
-- [ ] Module detail route handles unknown module names gracefully.
-- [ ] No `modules/**` changes.
-
-### PR4
-
-- [ ] `/runs` timeline lists `PipelineRun`s; click shows related leads and audit subset.
-- [ ] `/compliance` shows hard rules, risk table, interactive checklist, and explicit exclusions.
+- [ ] Leads list fetches from `/api/leads`, supports filters, stage funnel, and bulk available-module actions.
+- [ ] Lead detail fetches from `/api/leads/{id}`, displays raw fields, module result tabs with structured Domain/Social panels, and `AuditLogPanel` with `legal_basis` and `raw_stderr_json` visible.
+- [ ] `/modules` groups modules by `available` / `in_development` / `planned` and `/modules/[name]` renders docs from the registry.
+- [ ] `/runs` lists live `PipelineRun`s and `/runs/[id]` shows run detail linked to leads.
+- [ ] `/compliance` shows hard rules, risk table, checklist, and exclusions from `/api/compliance/summary`.
 - [ ] `/settings` includes environment badge, role selector, and stub connectors.
-- [ ] Keyboard navigation and focus rings pass manual a11y check.
-- [ ] Responsive sidebar collapse works on mobile widths.
-- [ ] `npm run build` still passes.
+- [ ] `POST /api/leads/{id}/run` and `POST /api/pipelines/run` call the control-plane API and return updated lead / accepted run.
+- [ ] README and `api-contracts.md` describe the live `services/control-plane` base URL and `NEXT_PUBLIC_API_BASE_URL`.
 
 ---
 
@@ -667,9 +540,9 @@ Files:
 |---------------------------------------|-------------|
 | **1. No non-consensual personal surveillance** | Social footprint tab shows only `match/no-match + confidence` (`matches[]` with `platform`, `handle`, `confidence`, `url`). No screenshots, no follower/location dumps, no reverse-image UI. Reverse-image / GHunt excluded entirely. |
 | **2. Respect third-party ToS** | LinkedIn scraping is not listed as an available module; exclusions callout names it. Modules list shows only approved Stage 2 modules. |
-| **3. Rate-limit / document breach-checking** | No breach/leak signals surfaced to sales views. Settings role selector provides `admin | risk` stub, but the UI never renders breach/leak data in PRs 1–4 because no such module exists. Pre-run checklist records legal basis and permission ref before stub run. |
+| **3. Rate-limit / document breach-checking** | No breach/leak signals surfaced to sales views. Settings role selector provides `admin | risk` stub, but the UI never renders breach/leak data in v1 because no such module exists. Pre-run checklist records legal basis and permission ref before a run. |
 | **4. Log legal basis and source permission reference** | Every `LeadRecord` shows `permission_ref` chip. Every `AuditEvent` shows `legal_basis` and `checked_at`. Every `PipelineRun` shows `legal_basis` and `permission_refs`. Footer reminds users of legal basis. |
-| **5. Data retention** | Settings page includes a retention-policy stub. Runs view and compliance text note that retention windows are enforced by future backend; UI does not persist enriched lead data beyond the mock session. |
+| **5. Data retention** | Settings page includes a retention-policy stub. The control-plane stores leads/runs/audit events; retention windows are enforced in a future backend pass. |
 
 ### Per-category risk table UI
 
@@ -692,8 +565,9 @@ Rendered from `/api/compliance/summary` as a read-only table matching `docs/comp
 ## 12. Decisions from planning clarifications
 
 - **Package manager:** `npm` + Next.js 15 (App Router, strict TypeScript, Tailwind).
-- **Mock data transport:** Next.js App Router route handlers with a client-side fallback to `lib/mocks/seed.ts` for static-export compatibility.
-- **Role stub:** Settings page contains a local-state `RoleSelector` (`sales | admin | risk`) that gates any future sensitive views; for PRs 1–4 it primarily controls whether advanced risk cards are visible and is persisted only in Zustand.
+- **API transport:** The UI fetches the live `services/control-plane` API at `NEXT_PUBLIC_API_BASE_URL`. No Next.js `/api/*` route handlers, no `lib/mocks/seed.ts` product path.
+- **Role stub:** Settings page contains a local-state `RoleSelector` (`sales | admin | risk`) that gates any future sensitive views; for v1 it primarily controls whether advanced risk cards are visible and is persisted only in Zustand.
+- **Module wiring discipline:** future modules are integrated one at a time via `services/control-plane/internal/runner` and `internal/registry`, with `lib/api/types.ts` and the lead detail panels updated to match.
 
 ---
 
