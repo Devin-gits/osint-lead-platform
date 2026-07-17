@@ -146,11 +146,13 @@ Wireframes use a 12-column desktop grid reference. `|` separates panes; `[ ]` in
 
 ### 5.1 Command Center (`/command-center`)
 
+> **Sequencing note:** The wireframes below show the fully data-backed Command Center envisioned once Leads, Runs, and Audit Explorer are implemented and their API data requirements are verified. **PR1 implements only a static workspace-home foundation**: product explanation, workflow explainer, a “Create lead” link, navigation shortcuts, and the API reachability indicator. Live operational metrics, trends, recent activity, lead/run-derived actions, compliance calculations, and module-health claims are explicitly excluded from PR1 and deferred to a later, separately scoped frontend PR.
+
 Desktop (sidebar expanded):
 
 ```
 +-----------------------------------------------------------------------------------+
-| ≡ | OSINT Lead Console        | API Healthy | Role: Ops analyst | Settings  | ? |
+| ≡ | OSINT Lead Console        | API reachable | Role: Ops analyst | Settings  | ? |
 +-----------------------------------------------------------------------------------+
 | W |                                                                                 |
 | o |  Command Center                                              [+ Create lead]  |
@@ -1002,7 +1004,7 @@ ui/web-console/components/lead-detail/LeadAuditTab.tsx    (new)
 ui/web-console/components/lead-detail/LeadRawRecordTab.tsx (new)
 ui/web-console/components/modules/ModuleRunDrawer.tsx      (new)
 ui/web-console/components/ui/ActivityTimeline.tsx        (new)
-ui/web-console/components/ui/AuditEventDetailDrawer.tsx    (new)
+ui/web-console/components/audit/AuditEventDetailDrawer.tsx    (new)
 ui/web-console/components/ui/AuditLogPanel.tsx             (refactor)
 ```
 
@@ -1025,8 +1027,8 @@ ui/web-console/app/runs/[id]/page.tsx
 ui/web-console/app/audit/page.tsx                         (new)
 ui/web-console/components/runs/RunProgressTimeline.tsx   (new)
 ui/web-console/components/audit/AuditExplorer.tsx         (new)
-ui/web-console/components/audit/AuditEventDetailDrawer.tsx (moved from PR3)
-ui/web-console/components/ui/ActivityTimeline.tsx        (moved from PR3)
+ui/web-console/components/audit/AuditEventDetailDrawer.tsx
+ui/web-console/components/ui/ActivityTimeline.tsx
 ```
 
 **What it does:**
