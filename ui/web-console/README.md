@@ -51,5 +51,11 @@ npm run lint       # next lint
 - The `EnvironmentBanner` and top-bar badge reflect live API connectivity.
 - Leads list supports filters, stage funnel, permission-ref warnings, multi-select bulk runs, and live pagination.
 - Lead detail shows module result tabs, per-module run actions, and an expandable audit panel.
+  The Domain tab renders DNS, SSL/TLS, HTTP, WHOIS and theHarvester cards.
+  The Social tab renders per-handle status and claimed/available platform chips.
+- The leads list bulk-actions bar dynamically offers every `available` module returned by `/api/modules`.
 - `/runs/[id]` shows a single pipeline run and links back to its leads.
+- `social-footprint` requires the Maigret Python wrapper on the API host; long Maigret/theHarvester
+  runs may need `MODULE_TIMEOUT` and the control-plane HTTP write timeout raised — see
+  `services/control-plane/README.md`.
 - Design tokens are defined in `lib/theme/tokens.ts` and mirrored as CSS custom properties in `app/globals.css`; no one-off colors in pages.

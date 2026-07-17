@@ -51,10 +51,16 @@ const moduleStatusOptions = [
   { value: "not_run", label: "not run" },
 ];
 
-const availableModules: { name: ModuleName; label: string }[] = [
-  { name: "email-validate", label: "Email validate" },
-  { name: "phone-validate", label: "Phone validate" },
-];
+function useAvailableModules() {
+  const { data: modules } = useModules();
+  return useMemo(() => {
+    return (
+      modules
+        ?.filter((m) => m.dev_status === "available")
+        .map((m) => ({ name: m.name, label: m.display_name })) ?? []
+    );
+  }, [modules]);
+}
 
 export default function LeadsPage() {
   const router = useRouter();
@@ -80,16 +86,8 @@ export default function LeadsPage() {
 
   const { data, isLoading, error } = useLeads(filters);
   const create = useCreateLead();
-  const { data: modules } = useModules();
+  const availableModules = useAvailableModules();
   const pipeline = useRunPipeline();
-
-  const moduleAvailable = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    modules?.forEach((m) => {
-      map[m.name] = m.dev_status === "available";
-    });
-    return map;
-  }, [modules]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,7 +249,7 @@ export default function LeadsPage() {
                 key={name}
                 size="sm"
                 variant="secondary"
-                disabled={!moduleAvailable[name] || pipeline.isPending}
+                disabled={pipeline.isPending}
                 onClick={() => runBulk(name)}
               >
                 {pipeline.isPending ? "Running…" : `Run ${label}`}
