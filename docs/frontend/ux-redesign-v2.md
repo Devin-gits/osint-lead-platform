@@ -31,13 +31,13 @@ The current `ui/web-console` is functionally wired to the live control-plane API
 - **No home / command center.** The product redirects `/` to `/leads` (`app/page.tsx`). There is no place to see overall queue health, latest runs, or compliance readiness at a glance.
 - **Audit and Runs are under-utilized.** The global `/api/audit` endpoint exists, but there is no `/audit` screen. Runs are a list/table with no per-lead outcome summary.
 - **Modules and Compliance feel isolated.** They are reference pages, not connected to lead workflows.
-- **Settings contains only stubs.** API keys, CRM, SSO, and retention are placeholders with no connection to real configuration or API health.
+- **Settings contains only stubs.** API keys, CRM, SSO, and retention are placeholders with no connection to real configuration or API reachability.
 
 ### 1.4 Observability problems
 
 - **Audit trail is lead-local.** `AuditLogPanel` is only rendered inside the lead detail. A compliance reviewer who wants to review all activity for a module or time window has no screen.
 - **Run detail lacks a timeline.** `GET /api/runs/{id}` returns `PipelineRun` with `audit_event_ids`, but the UI shows only a summary grid and a list of lead IDs (`app/runs/[id]/page.tsx`). It does not surface per-module completion order or per-lead status.
-- **No API health surface area.** `TopBar` shows a small “Live API / API offline” badge, but it does not explain *what* is failing or provide a retry action.
+- **No API reachability surface area.** `TopBar` shows a small “reachable / offline” badge, but it does not explain *what* is failing or provide a retry action.
 - **No offline/unknown state system.** If `GET /api/leads` fails, the page shows an inline error but no persistent “retry” or “working offline” affordance.
 
 ---
@@ -157,8 +157,8 @@ Desktop (sidebar expanded):
 | r |                                                                                 |
 | k |  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐   |
 |   |  │ Leads ready         │  │ Last run            │  │ Compliance          │   |
-|   |  │ 24                  │  │ #run-8a2f completed │  │ 0 violations        │   |
-|   |  │ +3 today            │  │ 5 leads, 2 modules  │  │ 1 pending review    │   |
+|   |  │ 24                  │  │ #run-8a2f completed │  │ Guidance available        │   |
+|   |  │ +3 today            │  │ 5 leads, 2 modules  │  │ Review checklist    │   |
 |   |  │ [View queue ->]      │  │ [View run ->]        │  │ [Open audit ->]      │   |
 |   |  └─────────────────────┘  └─────────────────────┘  └─────────────────────┘   |
 |   |                                                                                 |
@@ -193,7 +193,7 @@ Mobile:
 | [View run ->]                   |
 |                                |
 | Compliance                     |
-| 0 violations                   |
+| Guidance available                   |
 | [Open audit ->]                 |
 |                                |
 | Quick actions                  |
@@ -210,7 +210,7 @@ Mobile:
 **Interaction notes:**
 - The “Recent activity” table is a client-side composition of the latest `GET /api/leads` and `GET /api/runs` results; it does not require a new endpoint.
 - Quick-action buttons are context-aware: e.g., “Run email-validate on 3 raw” is disabled if no raw leads exist.
-- “Compliance pending review” links to `/audit?status=unknown`.
+- “Review compliance checklist” links to `/compliance`.
 
 ### 5.2 Leads — first-time empty state (`/leads`, no leads)
 
@@ -333,14 +333,14 @@ Desktop:
 | r |                                                                                 |
 | k |  Available modules                                                                |
 |   |  ┌─────────────────────────────────────────────────────────────────────────┐   |
-|   |  │ [x] email-validate   Syntax, MX, disposable, role checks (fast)          │   |
-|   |  │ [ ] phone-validate   Carrier / line type (fast)                           │   |
+|   |  │ [x] email-validate   Syntax, MX, disposable, role checks — fast          │   |
+|   |  │ [ ] phone-validate   Carrier / line type — fast                           │   |
 |   |  │ [ ] domain-intel     DNS / TLS / HTTP / WHOIS + optional theHarvester    │   |
-|   |  │                    Warning: May exceed default HTTP write timeout.              │   |
-|   |  │ [ ] social-footprint Maigret handle lookup (slow, rate-limited)           │   │
+|   |  │                    May take longer; configure HTTP_WRITE_TIMEOUT.              │   |
+|   |  │ [ ] social-footprint Maigret handle lookup — rate-limited, no ETA           │   │
 |   |  └─────────────────────────────────────────────────────────────────────────┘   │
 |   |                                                                                 |
-|   |  Estimated duration: < 5 seconds                                                 |
+|   |  Durations vary. No ETA is available from the current API.                                                 |
 |   |                                                                                 |
 +-----------------------------------------------------------------------------------+
 ```
@@ -348,6 +348,7 @@ Desktop:
 **Interaction notes:**
 - Step 2 module list is driven by `GET /api/modules` filtered to `available`.
 - Warnings are static guidance based on `docs/status/platform-v1.md` timeout recommendations; they are not fake estimates.
+- The Step 1 form requires a non-empty `permission_ref` before the user can proceed to module selection or submit a lead. This is a frontend guard; authoritative enforcement is a separately scoped control-plane concern.
 - On submit, the page calls `POST /api/leads` then `POST /api/leads/{id}/run` for the selected modules, then redirects to `/leads/{id}?tab=checks`.
 - If only Step 1 is submitted (no modules), the user lands on `/leads/{id}?tab=overview`.
 
@@ -360,7 +361,7 @@ Desktop:
 | ≡ | OSINT Lead Console                                              | Settings  |
 +-----------------------------------------------------------------------------------+
 | W |                                                                                 |
-| o |  ← Back to leads  Jane Doe · GitHub                               [Export ▼]  │
+| o |  ← Back to leads  Jane Doe · GitHub                               [Actions ▼]  (Export evidence — not available in v1)  │
 | r |                                                                                 |
 | k |  ┌────────────────────────────────────────┐  ┌────────────────────────────┐  │
 |   |  │ Stage: validated                       │  │ Run module                 │  │
@@ -407,7 +408,7 @@ Desktop:
 +-----------------------------------------------------------------------------------+
 | ... tabs ...                                                                      │
 |                                                                                   │
-|  Timeline                                            [Expand all] [Export JSON]  │
+|  Timeline                                            [Expand all] [Export evidence — not available in v1]  │
 |                                                                                   │
 |  09:41  email-validate  ok   tool: AfterShip/email-verifier  [details ->]        │
 |  09:40  lead-created    —    permission_ref: cmp-2026-q1                        │
@@ -415,7 +416,7 @@ Desktop:
 |  Clicking “details ->” opens AuditEventDetailDrawer with:                         │
 |  - module, tool, status, legal_basis                                              │
 |  - subject (email/domain/phone_redacted/handle)                                │
-|  - raw_stderr_json (collapsible)                                                 │
+|  - `raw_stderr_json`, collapsed by default, labeled “Technical evidence — may contain sensitive operational data"                                                 │
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -435,8 +436,8 @@ Desktop:
 
 **Interaction notes:**
 - Tab state is persisted in the URL (`?tab=checks`).
-- The “Run module” list is the `ModuleRunDrawer` trigger set. Clicking a module opens a confirmation drawer showing estimated duration and legal basis.
-- “Export” is a stub dropdown (`settings/CrmConnectorStub` pattern) because there is no CRM export endpoint yet.
+- The “Run module” list is the `ModuleRunDrawer` trigger set. Clicking a module opens a confirmation drawer showing the selected module, legal basis, and a duration hint (e.g. “Fast”, “May take longer”, or “Rate-limited / potentially slow; no ETA available”).
+- There is no export action in v2. Evidence export is not available until authentication, authorization, export audit logging, and retention/deletion enforcement are in place.
 - `raw_stderr_json` is rendered inside `AuditEventDetailDrawer`, not inline.
 
 ### 5.6 Runs (`/runs`)
@@ -471,7 +472,7 @@ Desktop:
 | ≡ | OSINT Lead Console                                              | Settings  |
 +-----------------------------------------------------------------------------------+
 | W |                                                                                 │
-| o |  ← Back to runs  Run #run-8a2f                                  [Export JSON] │
+| o |  ← Back to runs  Run #run-8a2f                                  [Export evidence — not available in v1] │
 | r |                                                                                 │
 | k |  Status: completed   Type: batch   Started: 18 Jul 09:30   Finished: 09:31   │
 |   |  Legal basis: GDPR Art.6(1)(f) legitimate-interest                            │
@@ -497,7 +498,7 @@ Desktop:
 **Interaction notes:**
 - `RunProgressTimeline` is built from `PipelineRun.status`, `started_at`, and `finished_at`. It does **not** synthesize fake step logs.
 - The “Lead outcomes” table links each lead to `/leads/{id}?tab=checks`.
-- Audit events are fetched from `GET /api/audit?module=&status=` and filtered client-side by `run_id` (or by the IDs in `audit_event_ids`). If the backend later supports `run_id` query param, the component should use it.
+- Audit events are fetched from `GET /api/audit?module=&status=`. The v1 API does not support `run_id` filtering; the page may display events whose IDs match `run.audit_event_ids` from the events already loaded for the current audit page only.
 
 ### 5.8 Audit Log Explorer (`/audit`)
 
@@ -508,7 +509,7 @@ Desktop:
 | W |                                                                                 │
 | o |  Audit Log                                                                      │
 | r |                                                                                 │
-| k |  Filters: Module [All ▼]  Status [All ▼]  Lead ID [        ]  Date [All ▼]    │
+| k |  Filters: Module [All ▼]  Status [All ▼]  Lead ID (filter loaded page) [     ]    │
 |   |                                                                                 │
 |   |  ┌─────────────────────────────────────────────────────────────────────────┐   │
 |   |  │ Time │ Module       │ Lead     │ Status │ Tool              │ Basis   │   │
@@ -524,7 +525,7 @@ Desktop:
 
 **Interaction notes:**
 - Uses `GET /api/audit` with `module`, `status`, `page`, `page_size`.
-- Lead ID filter is a client-side text filter unless a future backend query param is added.
+- The v1 audit API does **not** support server-side filtering by `lead_id`, `run_id`, or date range. The Lead ID box is a client-side text filter over the currently loaded page only; it cannot search the entire audit log.
 - The drawer exposes `subject` and `raw_stderr_json`.
 
 ### 5.9 Modules (`/modules`)
@@ -622,9 +623,9 @@ Desktop:
 | W |                                                                                 │
 | o |  Settings                                                                       │
 | r |                                                                                 │
-| k |  Environment & API health                                                       │
-|   |  API base URL: http://localhost:8080            [APIHealthIndicator: healthy]  │
-|   |  [Refresh health]  [Edit base URL]                                             │
+| k |  Environment & API reachability                                                       │
+|   |  API base URL: http://localhost:8080            [APIHealthIndicator: reachable]  │
+|   |  [Refresh reachability]  [Edit base URL]                                             │
 |   |                                                                                 │
 |   |  Role: [Ops analyst ▼]                                                         │
 |   |                                                                                 │
@@ -638,7 +639,7 @@ Desktop:
 ```
 
 **Interaction notes:**
-- `APIHealthIndicator` calls `GET /api/leads?page_size=1` and reports latency + status.
+- `APIHealthIndicator` calls `GET /api/leads?page_size=1` and reports whether the API is reachable (not overall system health) plus latency.
 - Base URL editing is local-only and requires a page reload; it does not persist to backend.
 - All connector cards remain stubs and are labeled “not wired”.
 
@@ -683,8 +684,8 @@ Desktop:
    - The lead-outcomes table uses final module result keys from each lead.
 
 4. **Audit log**
-   - The global `/audit` page uses `GET /api/audit`.
-   - The run detail uses `run.audit_event_ids` to filter the global list (or fetch individually if needed).
+   - The global `/audit` page uses `GET /api/audit` with `module`, `status`, `page`, `page_size`.
+   - Server-side filtering by `lead_id`, `run_id`, or date range is **not** available in v1; any such filtering in the UI is local to the loaded page.
 
 ### 6.4 Future API proposal (documented, not implemented)
 
@@ -694,8 +695,17 @@ A separate future control-plane proposal could add:
 - `GET /api/jobs/{id}` with `status`, `progress`, `events[]`.
 - Optional SSE endpoint `GET /api/jobs/{id}/stream` for terminal/emitted events.
 - `PipelineRun` extended with an optional `job_id`.
+- Audit query expansion: `GET /api/audit?lead_id=&run_id=&from=&to=&module=&status=&page=&page_size=` so the Audit Explorer can search by lead/run/date without client-side filtering limitations.
 
 This redesign does **not** implement or depend on that proposal. Frontend code must continue to work with the current synchronous API.
+
+### 6.5 Technical-evidence (`raw_stderr_json`) disclosure rules
+
+- `raw_stderr_json` is **collapsed by default** in every UI surface.
+- The disclosure control is labeled **“Technical evidence — may contain sensitive operational data”**.
+- It is shown only inside `AuditEventDetailDrawer` or an equivalent detail panel; it is **never rendered in table cells, summary cards, or command-center metrics**.
+- There is **no bulk export** of `raw_stderr_json` in v2.
+- The UI must preserve the existing phone-redaction behaviour: redacted phone identifiers must not be exposed in the audit list or detail.
 
 ---
 
@@ -832,7 +842,7 @@ Most primitives remain. Refinements are styling/density only.
 |-----------|----------------|-----------------|
 | `AppShell` | Sidebar always 15rem, content narrow. | Three-column flex layout: sidebar rail/collapsed/exp, main scroll area. |
 | `Sidebar` | No groups, no icon-only state, mobile drawer simple. | `ResponsiveSidebar` with Workspace/Operations/Admin groups, rail mode, active accent bar. |
-| `TopBar` | Search stub, weak orientation. | Show current page title + breadcrumb, move API status to `APIHealthIndicator` in Settings or a subtle inline indicator. |
+| `TopBar` | Search stub, weak orientation. | Show current page title + breadcrumb, move API reachability to `APIHealthIndicator` in Settings or a subtle inline indicator. |
 | `Footer` | Optional; keep minimal copyright/help links. | No major change. |
 | `leads/page.tsx` | Empty state buried, filters always shown. | New `LeadsPage` with `EmptyWorkspaceState`, filter bar hidden when empty, `LeadReadinessCell`. |
 | `leads/[id]/page.tsx` | Long vertical stack, audit below fold. | Tabbed layout: Overview, Checks, Activity & Audit, Raw record; use `ModuleRunDrawer`. |
@@ -857,7 +867,7 @@ Most primitives remain. Refinements are styling/density only.
 | `AuditEventDetailDrawer` | `components/audit/AuditEventDetailDrawer.tsx` | Drawer showing full `AuditEvent` including subject and raw JSON. |
 | `EmptyWorkspaceState` | `components/ui/EmptyWorkspaceState.tsx` | Page-level empty state with CTA and guidance. |
 | `PermissionReferenceField` | `components/leads/PermissionReferenceField.tsx` | Input with help text, validation hint, and required badge. |
-| `APIHealthIndicator` | `components/ui/APIHealthIndicator.tsx` | Health check with status, latency, and retry action. |
+| `APIHealthIndicator` | `components/ui/APIHealthIndicator.tsx` | API reachability check with status, latency, and retry action. |
 | `ResponsiveSidebar` | `components/layout/ResponsiveSidebar.tsx` | Refactored sidebar with rail/expanded/drawer states. |
 
 ### 8.4 Proposed directory reorganization
@@ -920,14 +930,16 @@ components/
 
 Keep each PR small, reviewable, and accompanied by desktop + mobile screenshots. All PRs are frontend-only and must pass `npm run typecheck && npm run lint && npm run build`.
 
-### PR1 — Shell & design system
+### PR1 — Shell & design system / Command Center foundation
 
-**Title:** `feat(ui): responsive shell, design tokens, and style guide`
+**Title:** `feat(ui): responsive shell and command-center foundation`
 
 **Allowed paths:**
 
 ```
 ui/web-console/app/layout.tsx
+ui/web-console/app/page.tsx
+ui/web-console/app/command-center/page.tsx
 ui/web-console/app/style-guide/page.tsx
 ui/web-console/app/globals.css
 ui/web-console/components/layout/AppShell.tsx
@@ -943,11 +955,15 @@ ui/web-console/lib/theme/tokens.ts
 **What it does:**
 - Introduces `ResponsiveSidebar` with rail/expanded/drawer states and grouped navigation.
 - Refactors `AppShell` to use the new sidebar and full-width main area.
-- Updates `TopBar` to show page title/breadcrumb and moves API health to `APIHealthIndicator`.
-- Adds new primitive components.
+- Updates `TopBar` to show page title/breadcrumb and moves API reachability to `APIHealthIndicator`.
+- Adds new primitive components (`EmptyWorkspaceState`, `APIHealthIndicator`, `OperationalMetric`).
 - Updates `style-guide` with all new components and states.
+- Changes `/` to redirect to `/command-center`.
+- Adds `/command-center` as a restrained foundation page: title, workflow explainer, links to Leads/Runs/Modules/Compliance, primary “Create lead” link, and `APIHealthIndicator`.
 
-**Out of scope:** leads, runs, audit pages, create flow.
+**PR1 intentionally does not show:** lead counts, trends, compliance scores, risk scores, module health claims, runtime estimates, or any data from Leads/Runs/Audit pages.
+
+**Out of scope:** leads, lead detail, runs, audit explorer, create flow, modules, compliance, settings.
 
 ### PR2 — Leads & create lead
 
@@ -968,7 +984,7 @@ ui/web-console/lib/api/types.ts                           (read-only usage; no A
 **What it does:**
 - Redesigns `/leads` list with hidden filters on empty state, `LeadReadinessCell`, and improved bulk actions.
 - Moves create flow from dialog to `/leads/create` with two steps.
-- Highlights `permission_ref` as required.
+- Highlights `permission_ref` as required; Step 1 must be non-empty before module selection is enabled. This is a frontend guard only; backend enforcement is a separate control-plane concern.
 
 **Out of scope:** lead detail.
 
@@ -1100,7 +1116,7 @@ docs/frontend/api-contracts.md                          (only if adding a clearl
 
 1. User opens app -> `/command-center` sees queue health + “Create lead” CTA.
 2. Click “Create lead” -> `/leads/create` step 1 highlights `permission_ref`.
-3. Step 2 lets user pick available modules with clear duration warnings.
+3. Step 2 lets user pick available modules with honest duration hints (no fixed ETA).
 4. On create, user lands on `/leads/{id}?tab=checks`.
 5. Each module result is decision-first; raw JSON is one click away.
 6. Running a module opens a drawer with confirmation and legal basis.
@@ -1113,11 +1129,11 @@ docs/frontend/api-contracts.md                          (only if adding a clearl
 
 The following items are explicitly excluded from the v2 UI redesign and are documented as future work or backend concerns:
 
-- **CRM export wiring.** No real CRM connector or export endpoint exists; UI keeps the “Export” dropdown as a stub.
+- **CRM/evidence export wiring.** No real CRM connector, evidence export endpoint, or export audit trail exists; no export action is added in v2.
 - **Real auth / SSO.** Settings stubs remain; no login flow.
 - **Async job streaming / SSE.** Proposed separately in PR5; UI must work without it.
 - **New control-plane API endpoints.** The redesign consumes existing v1 endpoints only.
-- **Risk algorithm expansion.** `risk_level` is computed from email + phone only today; the UI shows whatever the API returns.
+- **Risk-level interpretation.** The UI renders `risk_level` returned by the current control-plane API. v2 must not imply that a composite or policy-derived risk score exists. `unknown` is a valid outcome and must be shown honestly.
 - **`extraction` and `company-enrich` modules.** These are `planned` in the registry; UI shows them in the Planned group.
 - **Bulk breach/leak signals, LinkedIn scraping, reverse-image discovery.** Excluded per `docs/compliance.md`; UI must not add UI for them.
 - **Email/phone validation logic changes.** No changes to `modules/**` or `services/**`.
