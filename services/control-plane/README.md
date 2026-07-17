@@ -28,7 +28,9 @@ leads, audit events, and pipeline runs.
 | `DATABASE_URL` | — | Postgres URL, e.g. `postgres://user:pass@localhost/osint?sslmode=disable` |
 | `PORT` | `8080` | HTTP port |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
-| `MODULE_TIMEOUT` | `90s` | Per-module/sub-handle timeout (raise this for slow networks or many handles) |
+| `MODULE_TIMEOUT` | `90s` | Shared timeout for email/phone and floor for domain-intel (60s). Social-footprint ignores this and uses its own 90s per-handle default. |
+| `HTTP_READ_TIMEOUT` | `30s` | HTTP server read timeout |
+| `HTTP_WRITE_TIMEOUT` | `180s` | HTTP server write timeout. Must exceed the longest expected module run (e.g., Maigret multi-handle). |
 | `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
 | `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Backend selector: `maigret`, `sherlock`, `both`, or `osintgram` |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` (on PATH) | Python interpreter used to run the wrapper |
@@ -56,6 +58,25 @@ go test ./...
 ```
 
 For Postgres-backed tests, set `TEST_DATABASE_URL`.
+
+## Recommended timeout profiles
+
+For email/phone-only runs the defaults are fine. For `domain-intel` and
+`social-footprint` (Maigret can check up to 3 handles × 90s each plus rate
+limits), raise the HTTP write timeout so the server does not close the
+connection before the runner finishes:
+
+```bash
+# Fast local machine with Maigret wrapper installed
+export HTTP_WRITE_TIMEOUT=300s
+
+# Slower network / many handles
+export HTTP_WRITE_TIMEOUT=600s
+```
+
+`MODULE_TIMEOUT` still controls email/phone and acts as a 60s floor for
+domain-intel; `social-footprint` ignores it and uses `SOCIAL_FOOTPRINT_TIMEOUT`
+(default `90s`) for each handle.
 
 ## API
 

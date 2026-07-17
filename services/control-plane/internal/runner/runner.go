@@ -29,15 +29,27 @@ type Runner struct {
 	socialVal *socialfootprint.Validator
 }
 
-// New builds a Runner backed by the supplied Store. A non-positive timeout uses
-// each module's default.
+// New builds a Runner backed by the supplied Store.
+//
+// Timeout policy:
+//   - email/phone: use the supplied timeout (non-positive falls back to each
+//     module's own default, 10s).
+//   - domain-intel: at least 60s so DNS/TLS/HTTP/WHOIS + theHarvester have room;
+//     a non-positive timeout uses the module default (60s).
+//   - social-footprint: always passes 0 so the module's DefaultTimeout (90s per
+//     handle) applies, independent of a shorter MODULE_TIMEOUT used for email.
 func New(s store.Store, timeout time.Duration) *Runner {
+	domainTimeout := timeout
+	if domainTimeout > 0 && domainTimeout < 60*time.Second {
+		domainTimeout = 60 * time.Second
+	}
+
 	return &Runner{
 		store:     s,
 		emailVal:  emailvalidate.NewValidator(timeout),
 		phoneVal:  phonevalidate.NewValidator(timeout),
-		domainVal: domainintel.NewAnalyzer(timeout),
-		socialVal: socialfootprint.NewValidator(timeout, 0),
+		domainVal: domainintel.NewAnalyzer(domainTimeout),
+		socialVal: socialfootprint.NewValidator(0, 0),
 	}
 }
 
