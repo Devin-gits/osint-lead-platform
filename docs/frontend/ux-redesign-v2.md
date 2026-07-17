@@ -1059,7 +1059,7 @@ docs/frontend/api-contracts.md                          (only if adding a clearl
 
 ### 10.1 UX criteria
 
-- [ ] `/` redirects to `/command-center`, which shows queue health, recent runs, and a primary “Create lead” action.
+- [ ] `/` redirects to `/command-center`. PR1 shows a static workspace home with navigation shortcuts and a primary “Create lead” action. A later, separately scoped frontend PR adds live queue health, recent runs, and other operational metrics once the underlying Leads/Runs/Audit data surfaces are implemented and verified.
 - [ ] `/leads` empty state hides filters and guides the user to create a lead and view modules.
 - [ ] `/leads` populated state shows `LeadReadinessCell` and missing-permission warnings.
 - [ ] `/leads/create` is a two-step form with `permission_ref` emphasized in step 1 and module selection in step 2.
@@ -1116,7 +1116,7 @@ docs/frontend/api-contracts.md                          (only if adding a clearl
 
 ### Redesigned flow
 
-1. User opens app -> `/command-center` sees queue health + “Create lead” CTA.
+1. User opens app -> `/command-center` provides a workspace home and “Create lead” CTA; live queue health is deferred to a later scoped PR.
 2. Click “Create lead” -> `/leads/create` step 1 highlights `permission_ref`.
 3. Step 2 lets user pick available modules with honest duration hints (no fixed ETA).
 4. On create, user lands on `/leads/{id}?tab=checks`.
