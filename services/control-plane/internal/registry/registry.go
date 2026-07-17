@@ -3,8 +3,10 @@
 package registry
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/Moyeil-73/osint-lead-platform/modules/social-footprint"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 )
 
@@ -55,7 +57,7 @@ func New() *Registry {
 			Name:          models.ModuleSocialFootprint,
 			DisplayName:   "Social Footprint",
 			Category:      "validate",
-			DevStatus:     "in_development",
+			DevStatus:     "available",
 			NamespacedKey: "social_footprint",
 			BackingTools:  []string{"soxoj/maigret@0.6.2 (Python wrapper subprocess, curated platform list)"},
 			Description:   "Per-handle match/no-match spot check across a curated platform allow-list.",
@@ -95,7 +97,11 @@ func New() *Registry {
 			"if theHarvester is installed on PATH (or DOMAIN_INTEL_HARVESTER_BIN is set), invokes it as a subprocess with a keyless source allowlist. " +
 			"Each sub-tool degrades to status 'unknown' independently on failure or timeout; the combined 'domain_intel' status is 'ok' if either sub-tool reports ok. " +
 			"Results are namespaced under the `domain_intel` key. Audit records include the domain, tool, status, legal basis and any error.",
-		models.ModuleSocialFootprint: "Not wired in control-plane v1. Will run the Maigret Python wrapper with a curated platform allow-list and an in-process rate limiter.",
+		models.ModuleSocialFootprint: "Derives up to " + strconv.Itoa(socialfootprint.MaxHandles) + " handle candidates from the email local-part and any already-enriched domain_intel.harvester sub-object, " +
+			"then runs the Maigret Python wrapper as a subprocess over a curated platform allow-list. " +
+			"If Python or the wrapper is unavailable, the module degrades each handle to status 'unknown' with an error note but does not crash the pipeline. " +
+			"Each handle produces one audit record with the handle checked, tool, status and legal basis. " +
+			"Results are namespaced under the `social_footprint` key.",
 		models.ModuleExtraction:      "Planned for a future PR.",
 		models.ModuleCompanyEnrich:   "Planned for a future PR.",
 	}

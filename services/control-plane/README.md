@@ -10,8 +10,9 @@ leads, audit events, and pipeline runs.
   - `email-validate` (in-process, AfterShip/email-verifier)
   - `phone-validate` (in-process, libphonenumber; optional numverify)
   - `domain-intel` (in-process Go web-check reimplementation + optional theHarvester subprocess)
+  - `social-footprint` (handle derivation, Maigret Python wrapper subprocess, curated platform allow-list)
 - Stubbed / not wired in v1:
-  - `social-footprint`, `extraction`, `company-enrich`
+  - `extraction`, `company-enrich`
 - Uses Postgres for persistence; falls back to an in-memory store when
   `DATABASE_URL` is unset (useful for local tests).
 
@@ -27,8 +28,13 @@ leads, audit events, and pipeline runs.
 | `DATABASE_URL` | — | Postgres URL, e.g. `postgres://user:pass@localhost/osint?sslmode=disable` |
 | `PORT` | `8080` | HTTP port |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
-| `MODULE_TIMEOUT` | `10s` | Per-module timeout |
+| `MODULE_TIMEOUT` | `90s` | Per-module/sub-handle timeout (raise this for slow networks or many handles) |
 | `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
+| `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Backend selector: `maigret`, `sherlock`, `both`, or `osintgram` |
+| `SOCIAL_FOOTPRINT_PYTHON` | `python3` (on PATH) | Python interpreter used to run the wrapper |
+| `SOCIAL_FOOTPRINT_WRAPPER` | `wrapper/maigret_check.py` (auto-located) | Path to the Maigret wrapper script |
+| `SOCIAL_FOOTPRINT_TIMEOUT` | `90s` | Per-handle subprocess timeout |
+| `SOCIAL_FOOTPRINT_MIN_INTERVAL` | `5s` (`15s` for Osintgram) | Minimum spacing between consecutive per-lead `Check` calls |
 
 ## Run locally
 
@@ -77,10 +83,10 @@ All endpoints return JSON envelopes:
 ### Manual smoke test
 
 ```bash
-# 1. Create a lead
+# 1. Create a lead with an email and domain
 LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
-  -d '{"email":"support@github.com","company":"GitHub","permission_ref":"p-001"}' | jq -r '.data.id')
+  -d '{"email":"support@github.com","company":"GitHub","domain":"github.com","permission_ref":"p-001"}' | jq -r '.data.id')
 
 # 2. Run email-validate
 curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
@@ -92,7 +98,20 @@ curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
   -H 'Content-Type: application/json' \
   -d '{"modules":["domain-intel"]}' | jq '.data.domain_intel'
 
-# 4. Get the lead with audit events (raw_stderr_json and legal_basis)
+# 4. Run social-footprint (uses email + any enriched domain_intel.harvester)
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["social-footprint"]}' | jq '.data.social_footprint'
+
+# 5. Social-footprint on a lead with no usable handle stays skipped without crashing
+HANDLELESS=$(curl -s -X POST http://localhost:8080/api/leads \
+  -H 'Content-Type: application/json' \
+  -d '{"company":"NoHandle"}' | jq -r '.data.id')
+curl -s -X POST "http://localhost:8080/api/leads/$HANDLELESS/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["social-footprint"]}' | jq '.data | {stage, social_footprint}'
+
+# 6. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
 ```
 
@@ -113,7 +132,7 @@ With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
 ## Notes
 
 - No mock Next.js APIs; the UI consumes this real API.
-- No `modules/` code changes (the `domain-intel` library is used as-is via `go.mod` replace).
+- No `modules/` code changes (`domain-intel` and `social-footprint` libraries are used as-is via `go.mod` replace).
 - No `ui/web-console/`, evaluation, or CI changes in this PR.
 - Audit events include `legal_basis` on every line and never store raw phone
   numbers (the `phone-validate` module redacts them before returning).
