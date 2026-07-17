@@ -32,10 +32,60 @@ export interface EmailValidateResult extends LeadResultMeta {
   is_free_provider?: boolean;
 }
 
+export interface DNSRecord {
+  a?: string[];
+  aaaa?: string[];
+  cname?: string[];
+  mx?: string[];
+  ns?: string[];
+  txt?: string[];
+}
+
+export interface SSLInfo {
+  subject?: string;
+  issuer?: string;
+  valid?: boolean;
+  not_before?: string;
+  not_after?: string;
+  days_until_expiry?: number;
+  protocol?: string;
+  sans?: string[];
+}
+
+export interface HTTPInfo {
+  status_code?: number;
+  server?: string;
+  headers?: Record<string, string>;
+}
+
+export interface WhoisInfo {
+  registrar?: string;
+  created_date?: string;
+  domain_age_days?: number;
+}
+
+export interface WebCheckResult extends LeadResultMeta {
+  status: ModuleStatus;
+  resolvable?: boolean;
+  dns?: DNSRecord;
+  ssl?: SSLInfo;
+  http?: HTTPInfo;
+  whois?: WhoisInfo;
+}
+
+export interface HarvesterResult extends LeadResultMeta {
+  status: ModuleStatus;
+  emails?: string[];
+  hosts?: unknown[];
+  ips?: string[];
+  sources?: string[];
+}
+
 export interface DomainIntelResult extends LeadResultMeta {
   status: ModuleStatus;
-  web_check?: { status: ModuleStatus; summary?: string };
-  harvester?: { status: ModuleStatus; emails_found?: number };
+  web_check?: WebCheckResult;
+  harvester?: HarvesterResult;
+  source_tools?: string[];
 }
 
 export interface PhoneValidateResult extends LeadResultMeta {
@@ -47,16 +97,35 @@ export interface PhoneValidateResult extends LeadResultMeta {
   risk_flags?: string[];
 }
 
-export interface SocialFootprintMatch {
+export interface PlatformSignal {
   platform: string;
-  handle: string;
-  confidence: number;
+  status: "claimed" | "available" | "unknown";
   url?: string;
+  http_status?: number;
+}
+
+export interface HandleResult {
+  handle: string;
+  origin: string;
+  status: ModuleStatus;
+  platforms: PlatformSignal[];
+  claimed_count: number;
+  checked_at: string;
+  source_tool: string;
+  error?: string;
 }
 
 export interface SocialFootprintResult extends LeadResultMeta {
   status: ModuleStatus;
-  matches?: SocialFootprintMatch[];
+  reason?: string;
+  handles_checked?: string[];
+  handles?: HandleResult[];
+  active_signals?: number;
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+  rate_limit_note?: string;
+  // Legacy fields kept for backwards compatibility with older payloads.
+  matches?: { platform: string; handle: string; confidence: number; url?: string }[];
   summary?: string;
 }
 

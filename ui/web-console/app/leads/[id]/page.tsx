@@ -15,7 +15,12 @@ import { AuditLogPanel } from "@/components/ui/AuditLogPanel";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { ModuleName } from "@/lib/api/types";
+import { cn } from "@/lib/utils/cn";
+import {
+  DomainIntelResult,
+  ModuleName,
+  SocialFootprintResult,
+} from "@/lib/api/types";
 
 const moduleOrder: { key: string; label: string; module: ModuleName }[] = [
   { key: "email_validate", label: "Email", module: "email-validate" },
@@ -227,8 +232,13 @@ function ModuleResultPanel({
       <div className="space-y-4 py-4">
         <StatusChip status="skipped" />
         <p className="text-sm text-foreground-muted">
-          {result.reason as string || "This module is not wired in control-plane v1."}
+          {(result.reason as string) || "This module did not run."}
         </p>
+        {module !== "email-validate" && module !== "phone-validate" && (
+          <Button size="sm" variant="ghost" onClick={onRun} disabled={isRunning}>
+            {isRunning ? "Running…" : "Run anyway"}
+          </Button>
+        )}
       </div>
     );
   }
@@ -244,19 +254,220 @@ function ModuleResultPanel({
         )}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {Object.entries(result).map(([key, value]) => {
-          if (key === "status" || value === undefined || value === null) return null;
-          return (
-            <div key={key} className="rounded-md border border-border bg-surface p-3">
-              <div className="text-xs text-foreground-muted capitalize">{key.replace(/_/g, " ")}</div>
-              <div className="mt-1 text-sm text-foreground">
-                {typeof value === "boolean" ? (value ? "yes" : "no") : typeof value === "object" ? JSON.stringify(value) : String(value)}
-              </div>
-            </div>
-          );
-        })}
+      {module === "domain-intel" ? (
+        <DomainResultPanel result={result as unknown as DomainIntelResult} />
+      ) : module === "social-footprint" ? (
+        <SocialResultPanel result={result as unknown as SocialFootprintResult} />
+      ) : (
+        <GenericResultGrid result={result} />
+      )}
+    </div>
+  );
+}
+
+function DomainResultPanel({ result }: { result: DomainIntelResult }) {
+  const wc = result.web_check;
+  const hv = result.harvester;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ResultCard label="Resolvable" value={wc?.resolvable === true ? "yes" : wc?.resolvable === false ? "no" : "—"} />
+        <ResultCard label="DNS status" value={<StatusChip status={wc?.dns ? "ok" : "unknown"} className="text-xs" />} />
+        <ResultCard label="SSL status" value={<StatusChip status={wc?.ssl?.valid ? "ok" : wc?.ssl ? "unknown" : "not_run"} className="text-xs" />} />
+        <ResultCard label="Harvester status" value={<StatusChip status={hv?.status || "not_run"} className="text-xs" />} />
       </div>
+
+      {wc?.dns && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">DNS records</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            {wc.dns.a && wc.dns.a.length > 0 && <RecordList label="A" items={wc.dns.a} />}
+            {wc.dns.mx && wc.dns.mx.length > 0 && <RecordList label="MX" items={wc.dns.mx} />}
+            {wc.dns.ns && wc.dns.ns.length > 0 && <RecordList label="NS" items={wc.dns.ns} />}
+            {wc.dns.txt && wc.dns.txt.length > 0 && (
+              <div>
+                <span className="text-xs text-foreground-muted">TXT</span>
+                <div className="mt-1 text-xs text-foreground-secondary">{wc.dns.txt.length} record(s)</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {wc?.ssl && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">SSL/TLS</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <ResultCard label="Valid" value={wc.ssl.valid ? "yes" : "no"} />
+            {wc.ssl.days_until_expiry !== undefined && <ResultCard label="Days until expiry" value={wc.ssl.days_until_expiry} />}
+            {wc.ssl.protocol && <ResultCard label="Protocol" value={wc.ssl.protocol} />}
+            {wc.ssl.subject && <ResultCard label="Subject" value={wc.ssl.subject} />}
+            {wc.ssl.issuer && <ResultCard label="Issuer" value={wc.ssl.issuer} />}
+            {wc.ssl.sans && wc.ssl.sans.length > 0 && <RecordList label="SANs" items={wc.ssl.sans} />}
+          </div>
+        </div>
+      )}
+
+      {wc?.http && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">HTTP</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {wc.http.status_code !== undefined && <ResultCard label="Status code" value={wc.http.status_code} />}
+            {wc.http.server && <ResultCard label="Server" value={wc.http.server} />}
+          </div>
+        </div>
+      )}
+
+      {wc?.whois && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">WHOIS</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {wc.whois.registrar && <ResultCard label="Registrar" value={wc.whois.registrar} />}
+            {wc.whois.domain_age_days !== undefined && <ResultCard label="Domain age (days)" value={wc.whois.domain_age_days} />}
+            {wc.whois.created_date && <ResultCard label="Created" value={new Date(wc.whois.created_date).toLocaleDateString()} />}
+          </div>
+        </div>
+      )}
+
+      {hv && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">theHarvester</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <ResultCard label="Status" value={<StatusChip status={hv.status} className="text-xs" />} />
+            {hv.emails && <ResultCard label="Emails found" value={hv.emails.length} />}
+            {hv.hosts && <ResultCard label="Hosts found" value={hv.hosts.length} />}
+            {hv.ips && <ResultCard label="IPs found" value={hv.ips.length} />}
+            {hv.error && <ResultCard label="Error" value={hv.error} className="col-span-full text-danger" />}
+          </div>
+        </div>
+      )}
+
+      <RawJsonView data={result} />
+    </div>
+  );
+}
+
+function SocialResultPanel({ result }: { result: SocialFootprintResult }) {
+  const handles = result.handles || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ResultCard label="Active signals" value={result.active_signals ?? 0} />
+        <ResultCard label="Confidence" value={`${Math.round((result.confidence ?? 0) * 100)}%`} />
+        <ResultCard label="Handles checked" value={result.handles_checked?.length ?? 0} />
+        <ResultCard label="Source tool" value={result.source_tool || "—"} />
+      </div>
+
+      {result.rate_limit_note && (
+        <p className="text-xs text-foreground-muted">{result.rate_limit_note}</p>
+      )}
+
+      <div className="space-y-3">
+        {handles.map((h) => (
+          <div key={h.handle} className="rounded-md border border-border bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-medium text-foreground">{h.handle}</div>
+                <div className="text-xs text-foreground-muted">origin: {h.origin}</div>
+              </div>
+              <StatusChip status={h.status} className="text-xs" />
+            </div>
+
+            {h.error && <p className="mt-2 text-sm text-danger">{h.error}</p>}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {h.platforms.map((p) => (
+                <Badge
+                  key={p.platform}
+                  variant={p.status === "claimed" ? "success" : p.status === "available" ? "outline" : "muted"}
+                  className="text-xs"
+                >
+                  {p.platform}: {p.status}
+                </Badge>
+              ))}
+            </div>
+
+            {h.claimed_count > 0 && (
+              <div className="mt-2 text-xs text-foreground-muted">
+                {h.claimed_count} claimed platform(s)
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <RawJsonView data={result} />
+    </div>
+  );
+}
+
+function GenericResultGrid({ result }: { result: Record<string, unknown> }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {Object.entries(result).map(([key, value]) => {
+        if (key === "status" || value === undefined || value === null) return null;
+        return (
+          <div key={key} className="rounded-md border border-border bg-surface p-3">
+            <div className="text-xs text-foreground-muted capitalize">{key.replace(/_/g, " ")}</div>
+            <div className="mt-1 text-sm text-foreground">
+              {typeof value === "boolean" ? (value ? "yes" : "no") : typeof value === "object" ? JSON.stringify(value) : String(value)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ResultCard({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("rounded-md border border-border bg-surface p-3", className)}>
+      <div className="text-xs text-foreground-muted">{label}</div>
+      <div className="mt-1 text-sm font-medium text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function RecordList({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div>
+      <span className="text-xs text-foreground-muted">{label}</span>
+      <ul className="mt-1 list-inside list-disc text-xs text-foreground-secondary">
+        {items.slice(0, 4).map((item) => (
+          <li key={item} className="break-all">{item}</li>
+        ))}
+        {items.length > 4 && <li>+{items.length - 4} more</li>}
+      </ul>
+    </div>
+  );
+}
+
+function RawJsonView({ data }: { data: unknown }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-border bg-surface p-3">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-xs font-medium text-foreground-secondary hover:text-foreground"
+      >
+        <span>Raw JSON</span>
+        <span>{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <pre className="mt-2 max-h-64 overflow-auto rounded-md bg-surface-elevated p-3 text-xs text-foreground-secondary">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      )}
     </div>
   );
 }
