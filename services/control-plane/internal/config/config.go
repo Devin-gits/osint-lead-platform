@@ -28,7 +28,7 @@ func Load() (*Config, error) {
 		ModuleTimeout:     90 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      120 * time.Second,
+		WriteTimeout:      180 * time.Second,
 	}
 
 	if cfg.Port == "" {
@@ -38,12 +38,22 @@ func Load() (*Config, error) {
 		cfg.CORSOrigin = "http://localhost:3000"
 	}
 
-	if v := os.Getenv("MODULE_TIMEOUT"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return nil, fmt.Errorf("parse MODULE_TIMEOUT: %w", err)
+	timeouts := []struct {
+		env string
+		d   *time.Duration
+	}{
+		{"MODULE_TIMEOUT", &cfg.ModuleTimeout},
+		{"HTTP_READ_TIMEOUT", &cfg.ReadTimeout},
+		{"HTTP_WRITE_TIMEOUT", &cfg.WriteTimeout},
+	}
+	for _, t := range timeouts {
+		if v := os.Getenv(t.env); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return nil, fmt.Errorf("parse %s: %w", t.env, err)
+			}
+			*t.d = d
 		}
-		cfg.ModuleTimeout = d
 	}
 
 	return cfg, nil

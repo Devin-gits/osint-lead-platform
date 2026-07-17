@@ -273,7 +273,7 @@ function DomainResultPanel({ result }: { result: DomainIntelResult }) {
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <ResultCard label="Resolvable" value={wc?.resolvable === true ? "yes" : wc?.resolvable === false ? "no" : "—"} />
-        <ResultCard label="DNS status" value={<StatusChip status={wc?.dns ? "ok" : "unknown"} className="text-xs" />} />
+        <ResultCard label="DNS status" value={<StatusChip status={wc?.status || "unknown"} className="text-xs" />} />
         <ResultCard label="SSL status" value={<StatusChip status={wc?.ssl?.valid ? "ok" : wc?.ssl ? "unknown" : "not_run"} className="text-xs" />} />
         <ResultCard label="Harvester status" value={<StatusChip status={hv?.status || "not_run"} className="text-xs" />} />
       </div>
