@@ -33,37 +33,18 @@ ui/web-console/
 │   ├── runs/
 │   │   ├── page.tsx            # runs timeline
 │   │   └── [id]/
-│   │       └── page.tsx        # run detail (optional)
+│   │       └── page.tsx        # run detail
 │   ├── compliance/
 │   │   └── page.tsx            # compliance page
-│   ├── settings/
-│   │   └── page.tsx            # settings stubs
-│   └── api/
-│       ├── leads/
-│       │   ├── route.ts
-│       │   └── [id]/
-│       │       └── route.ts
-│       ├── modules/
-│       │   ├── route.ts
-│       │   └── [name]/
-│       │       └── route.ts
-│       ├── audit/
-│       │   └── route.ts
-│       ├── runs/
-│       │   └── route.ts
-│       ├── compliance/
-│       │   └── summary/
-│       │       └── route.ts
-│       └── pipelines/
-│           └── run/
-│               └── route.ts
+│   └── settings/
+│       └── page.tsx            # settings stubs
 ├── components/
 │   ├── layout/
 │   │   ├── Sidebar.tsx
 │   │   ├── TopBar.tsx
 │   │   ├── Footer.tsx
 │   │   ├── AppShell.tsx
-│   │   └── MockDataBanner.tsx
+│   │   └── EnvironmentBadge.tsx
 │   ├── ui/                     # design-system primitives
 │   │   ├── Button.tsx
 │   │   ├── IconButton.tsx
@@ -119,11 +100,9 @@ ui/web-console/
 │   ├── theme/
 │   │   └── tokens.ts           # design tokens (colors, typography, motion)
 │   ├── api/
-│   │   ├── types.ts            # domain types (frozen in api-contracts.md)
-│   │   ├── client.ts           # fetch-first API client with seed fallback
+│   │   ├── types.ts            # domain types (source of truth for UI; live contract in api-contracts.md)
+│   │   ├── client.ts           # fetch client for NEXT_PUBLIC_API_BASE_URL
 │   │   └── hooks.ts            # TanStack Query hooks
-│   ├── mocks/
-│   │   └── seed.ts             # mock dataset + in-memory filtering helpers
 │   ├── store/
 │   │   └── ui.ts               # Zustand store for ephemeral UI state (role, sidebar)
 │   ├── utils/
@@ -132,9 +111,6 @@ ui/web-console/
 │   │   └── stage.ts            # pipeline-stage helpers (tested)
 │   └── validators/
 │       └── search.ts           # query-param validation helpers
-├── content/
-│   └── docs/
-│       └── email-validate.md   # static docs copy for module detail
 └── __tests__/
     ├── risk.test.ts
     └── stage.test.ts
@@ -147,11 +123,9 @@ ui/web-console/
 | Rule | Example |
 |------|---------|
 | App Router pages live under `app/<route>/page.tsx` | `app/leads/page.tsx` |
-| API routes live under `app/api/<route>/route.ts` | `app/api/leads/route.ts` |
 | Page-specific components under `components/<route>/` | `components/leads/LeadTable.tsx` |
 | Shared UI primitives under `components/ui/` | `components/ui/Button.tsx` |
 | Domain logic under `lib/` | `lib/api/client.ts`, `lib/theme/tokens.ts` |
-| Static content under `content/` | `content/docs/email-validate.md` |
 | Utility helpers are pure and unit-tested | `lib/utils/risk.ts` |
 
 ---
@@ -169,17 +143,16 @@ ui/web-console/
 
 - **Server state:** TanStack Query via `lib/api/hooks.ts`.
 - **Ephemeral UI state:** Zustand in `lib/store/ui.ts` (sidebar collapse, role, environment, checklist state).
-- **No global mutable lead store** — all lead data is fetched or derived from mock seed.
+- **No global mutable lead store** — all lead data is fetched from the live control-plane API.
 
 ---
 
-## 5. Mock data strategy
+## 5. Live API strategy
 
-- `lib/mocks/seed.ts` exports the canonical mock dataset and filtering/sorting functions.
-- `app/api/*` route handlers consume `seed.ts`.
-- `lib/api/client.ts` attempts `fetch('/api/...')` first, then falls back to `seed.ts` if the route is unavailable (e.g. static export).
-- All mock routes return `{ data, meta? }` envelopes.
-- Every screen using mock data shows `<MockDataBanner />`.
+- `lib/api/client.ts` fetches from `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`).
+- All endpoints return `{ data, meta? }` / `{ error }` envelopes.
+- TanStack Query hooks cache server state in `lib/api/hooks.ts`.
+- No local Next.js route handlers or `lib/mocks/seed.ts` product fallback.
 
 ---
 
@@ -197,7 +170,6 @@ ui/web-console/
 
 - `lib/utils/risk.ts` and `lib/utils/stage.ts` are pure and unit-tested.
 - Components use semantic HTML, `aria-label` on icon buttons, and visible focus rings.
-- A single Playwright/RTL smoke test checks navigation and the mock-data banner after PR4.
 - `npm run build`, `npm run lint`, and `npm run typecheck` are required to pass in every PR.
 
 ---
@@ -216,7 +188,7 @@ ui/web-console/
 ## 9. Boundaries
 
 - This frontend does **not** touch `modules/`, Go code, CI, or evaluations.
-- It does **not** implement a real orchestrator; `POST /api/pipelines/run` returns `501` or a stub accepted response.
+- It delegates all enrichment/validation to `services/control-plane` via `NEXT_PUBLIC_API_BASE_URL`.
 - It does **not** store real secrets; all settings are stubs.
 
 ---

@@ -1,9 +1,9 @@
-# Frontend API Contracts (v1 — Mock)
+# Frontend API Contracts (v1 — Live)
 
-> **Status:** mock-only contract for the web console.
-> All routes are implemented as Next.js App Router route handlers in `ui/web-console/app/api/**`.
-> A client-side fallback to `lib/mocks/seed.ts` is required so the app can also run under `output: 'export'`.
-> **Scope:** these contracts live entirely in `ui/web-console/` and `docs/frontend/`; no `modules/**`, Go code, or real orchestrator is created or modified.
+> **Status:** live contract implemented by `services/control-plane`.
+> The Next.js web console talks directly to the Go API at `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8080`).
+> There are no mock Next.js route handlers and no `lib/mocks/seed.ts` product path.
+> **Scope:** these contracts describe `services/control-plane/internal/http/**` and the payloads consumed by `ui/web-console/lib/api/**`; `modules/**` supply the underlying libraries.
 
 ---
 
@@ -40,10 +40,11 @@ HTTP status codes:
 | Code | When |
 |------|------|
 | `200` | Success (GET/POST) |
+| `201` | `POST /api/leads` created |
+| `202` | `POST /api/pipelines/run` accepted — poll `GET /api/runs/{id}` |
 | `400` | Bad request / missing required query or body field |
 | `404` | Resource not found (`lead`, `module`, `run`) |
-| `501` | `POST /api/pipelines/run` — orchestrator not wired yet |
-| `500` | Unexpected mock handler error |
+| `500` | Unexpected server error |
 
 ### Pagination
 
@@ -99,11 +100,52 @@ export interface EmailValidateResult {
 
 export interface DomainIntelResult {
   status: ModuleStatus;
-  web_check?: { status: ModuleStatus; summary?: string };
-  harvester?: { status: ModuleStatus; emails_found?: number };
   checked_at?: string;
-  source_tool?: string;
-  error?: string;
+  source_tools?: string[];
+  web_check?: {
+    status: ModuleStatus;
+    resolvable?: boolean;
+    dns?: {
+      a?: string[];
+      aaaa?: string[];
+      cname?: string[];
+      mx?: string[];
+      ns?: string[];
+      txt?: string[];
+    };
+    ssl?: {
+      subject?: string;
+      issuer?: string;
+      valid?: boolean;
+      not_before?: string;
+      not_after?: string;
+      days_until_expiry?: number;
+      protocol?: string;
+      sans?: string[];
+    };
+    http?: {
+      status_code?: number;
+      server?: string;
+      headers?: Record<string, string>;
+    };
+    whois?: {
+      registrar?: string;
+      created_date?: string;
+      domain_age_days?: number;
+    };
+    source_tool?: string;
+    checked_at?: string;
+  };
+  harvester?: {
+    status: ModuleStatus;
+    emails?: string[];
+    hosts?: unknown[];
+    ips?: string[];
+    sources?: string[];
+    error?: string;
+    source_tool?: string;
+    checked_at?: string;
+  };
 }
 
 export interface PhoneValidateResult {
@@ -118,18 +160,35 @@ export interface PhoneValidateResult {
   error?: string;
 }
 
+export interface PlatformSignal {
+  platform: string;
+  status: "claimed" | "available" | "unknown";
+  url?: string;
+  http_status?: number;
+}
+
+export interface HandleResult {
+  handle: string;
+  origin: string;
+  status: ModuleStatus;
+  platforms: PlatformSignal[];
+  claimed_count: number;
+  checked_at: string;
+  source_tool: string;
+  error?: string;
+}
+
 export interface SocialFootprintResult {
   status: ModuleStatus;
-  matches?: Array<{
-    platform: string;
-    handle: string;
-    confidence: number;
-    url?: string;
-  }>;
-  summary?: string;
+  reason?: string;
+  handles_checked?: string[];
+  handles?: HandleResult[];
+  active_signals?: number;
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+  rate_limit_note?: string;
   checked_at?: string;
   source_tool?: string;
-  error?: string;
 }
 
 export interface LeadRecord extends RawLead {
@@ -221,13 +280,59 @@ export interface PipelineRun {
 }
 ```
 
-### Module result types as UI projections
+### Module result types as namespaced keys
 
-`DomainIntelResult`, `PhoneValidateResult`, and `SocialFootprintResult` are intentionally thin UI projections for v1 mock data. The real backend may return additional namespaced sub-fields (e.g. `domain_intel.web_check.dns`, `phone_validate.local`, `social_footprint.handles[]`). Such additions are append-only and must live under the existing namespaced key; the frontend will display the richer fields when wiring real data in a later PR.
+`LeadRecord` exposes each module result as a top-level namespaced key (`email_validate`, `phone_validate`, `domain_intel`, `social_footprint`). The backend returns these flattened onto the lead object; the internal `results` map is not part of the public JSON. Each module writes only under its own namespace and never overwrites raw ingested fields.
+
+`DomainIntelResult` and `SocialFootprintResult` include the real nested sub-structures emitted by `modules/domain-intel` and `modules/social-footprint` (DNS/SSL/HTTP/WHOIS, theHarvester, handle results, platform signals, etc.). The UI renders the structured fields and keeps a collapsible raw JSON view for power users.
 
 ---
 
 ## 3. Endpoint definitions
+
+Path parameters use Go 1.22 `http.ServeMux` brace syntax (`{id}`, `{name}`).
+
+All lead responses are produced by `leadToJSON`: module result keys are flattened to the top level (e.g. `email_validate`, `domain_intel`) and the internal `Results` map is never exposed. `audit_events` are included only on detail endpoints.
+
+### `POST /api/leads`
+
+Create a lead. Body fields match `RawLead`.
+
+**Request body**
+
+```json
+{
+  "name": "Jane Doe",
+  "email": "support@github.com",
+  "phone": "+14155551212",
+  "company": "GitHub",
+  "domain": "github.com",
+  "source_id": "cmp-001",
+  "permission_ref": "perm-2026-001"
+}
+```
+
+**Response `201`**
+
+Returns the created `LeadRecord` (module keys flattened to the top level; `audit_events` not included).
+
+```json
+{
+  "data": {
+    "id": "lead-001",
+    "stage": "raw",
+    "risk_level": "unknown",
+    "name": "Jane Doe",
+    "email": "support@github.com",
+    "company": "GitHub",
+    "domain": "github.com",
+    "source_id": "cmp-001",
+    "permission_ref": "perm-2026-001",
+    "created_at": "2026-07-13T13:00:00Z",
+    "updated_at": "2026-07-13T13:00:00Z"
+  }
+}
+```
 
 ### `GET /api/leads`
 
@@ -268,7 +373,7 @@ Response type: `ApiResponse<LeadSummary[]>`. `audit_events` is not included in l
 }
 ```
 
-### `GET /api/leads/[id]`
+### `GET /api/leads/{id}`
 
 Return a single `LeadRecord` with `audit_events` hydrated.
 
@@ -315,6 +420,37 @@ Return a single `LeadRecord` with `audit_events` hydrated.
 }
 ```
 
+### `POST /api/leads/{id}/run`
+
+Run one or more modules on a single lead. Returns the full `LeadRecord` with `audit_events` hydrated after the run.
+
+**Request body**
+
+```json
+{
+  "modules": ["email-validate", "domain-intel"],
+  "permission_ref": "perm-2026-001",
+  "legal_basis": "GDPR Art.6(1)(f) legitimate-interest"
+}
+```
+
+`modules` is required. `permission_ref` and `legal_basis` are optional; they default to the lead's stored `permission_ref` and GDPR Art.6(1)(f) legitimate interest.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "id": "lead-001",
+    "stage": "validated",
+    "risk_level": "low",
+    "email_validate": { "status": "ok", ... },
+    "domain_intel": { "status": "ok", ... },
+    "audit_events": [ ... ]
+  }
+}
+```
+
 ### `GET /api/modules`
 
 Return all modules with dev status and metadata.
@@ -341,7 +477,7 @@ Return all modules with dev status and metadata.
 }
 ```
 
-### `GET /api/modules/[name]`
+### `GET /api/modules/{name}`
 
 Return a single `ModuleDetail` (`ModuleInfo` plus optional documentation).
 
@@ -377,9 +513,9 @@ Paginated `AuditEvent` list. Useful for global audit log views.
 | Name | Type | Description |
 |------|------|-------------|
 | `module` | string | Filter by module name |
-| `lead_id` | string | Filter by lead (mock only; real backend may resolve from `subject`) |
+| `status` | string | Filter by audit status (`ok`, `unknown`, `skipped`) |
 | `page` | number | Default `1` |
-| `page_size` | number | Default `50` |
+| `page_size` | number | Default `25`, max `100` |
 
 **Response `200`**
 
@@ -415,9 +551,34 @@ Return `PipelineRun` timeline.
 }
 ```
 
+### `GET /api/runs/{id}`
+
+Return a single `PipelineRun` by ID.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "id": "run-001",
+    "type": "batch",
+    "started_at": "2026-07-13T10:00:00Z",
+    "finished_at": "2026-07-13T10:05:00Z",
+    "status": "completed",
+    "lead_ids": ["lead-001", "lead-002"],
+    "modules_executed": ["email-validate", "domain-intel"],
+    "audit_event_ids": ["evt-001", "evt-002"],
+    "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+    "permission_refs": ["perm-2026-001", "perm-2026-002"]
+  }
+}
+```
+
 ### `GET /api/compliance/summary`
 
 Return structured compliance content derived from `docs/compliance.md`.
+
+**Known limitation:** this endpoint returns static governance content (`hard_rules`, `risk_table`, `checklist`, `exclusions`). It does not yet return numeric stats, counts, or per-run compliance scoring.
 
 **Response `200`**
 
@@ -452,7 +613,7 @@ Return structured compliance content derived from `docs/compliance.md`.
 
 ### `POST /api/pipelines/run`
 
-Stub endpoint. Accepts a run request body and returns either a mock accepted job or `501`.
+Batch run endpoint. Accepts a list of lead IDs and modules, creates a `PipelineRun`, executes the modules against each lead sequentially in the same request, and returns `202 Accepted` with the run ID. The run is updated to `completed` or `partial` before the response is sent, so the UI may immediately navigate to `/runs/{run_id}` or poll `GET /api/runs/{id}` as a future-proof pattern.
 
 **Request body**
 
@@ -460,35 +621,23 @@ Stub endpoint. Accepts a run request body and returns either a mock accepted job
 interface PipelineRunRequest {
   lead_ids: string[];
   modules: string[];
-  permission_ref: string;
-  legal_basis?: string; // defaults to "GDPR Art.6(1)(f) legitimate-interest"
+  permission_ref?: string; // falls back to each lead's stored permission_ref
+  legal_basis?: string;    // defaults to "GDPR Art.6(1)(f) legitimate-interest"
 }
 ```
 
-**Response `501`** (default)
-
-```json
-{
-  "error": {
-    "code": "ORCHESTRATOR_NOT_WIRED",
-    "message": "Pipeline orchestration is not implemented yet. Use manual module runs instead."
-  }
-}
-```
-
-**Response `202`** (optional alternate mock behavior)
+**Response `202`**
 
 ```json
 {
   "data": {
     "accepted": true,
-    "run_id": "run-mock-001",
-    "status": "pending"
+    "run_id": "run-001"
   }
 }
 ```
 
-The UI must always toast: `Orchestrator not wired`.
+The UI toasts a link to `/runs/{run_id}` and may continue polling the run detail.
 
 ---
 
@@ -509,9 +658,9 @@ export async function fetchComplianceSummary(): Promise<ApiResponse<ComplianceSu
 export async function runPipeline(body: PipelineRunRequest): Promise<ApiResponse<{ accepted: true; run_id: string }>>;
 ```
 
-### Fallback to static seed
+### No local mock fallback
 
-The default mode is a Node server (`next dev` / `next start`) so `/api/*` routes work. If `fetch` fails because the dev server is unreachable, the client imports `lib/mocks/seed.ts` and applies the same filtering/sorting logic locally as a resilience fallback. `output: 'export'` is not enabled in PR1 and is not a production target in v1.
+The UI requires a running control-plane API. There is no `lib/mocks/seed.ts` product path and no Next.js `/api/*` route handler fallback. Set `NEXT_PUBLIC_API_BASE_URL` to point at the Go API (default `http://localhost:8080`).
 
 ### TanStack Query hooks
 
@@ -539,12 +688,12 @@ export function useComplianceSummary(): UseQueryResult<ApiResponse<ComplianceSum
 - Phone numbers in audit subjects are always returned as `phone_redacted` (e.g. `+14*******86`).
 - Social footprint audit subjects use `handle` only; raw email/name never appears in `social-footprint` audit lines.
 - Every `AuditEvent` and `PipelineRun` includes `legal_basis`.
-- `permission_ref` is optional on `RawLead` / `LeadRecord`; the UI shows a warning chip when it is missing.
-- The UI never sends mock data to a real backend; all network calls are local to the Next.js dev server.
+- `permission_ref` is optional on `RawLead` / `LeadRecord`; the UI shows a warning chip when it is missing and the control-plane falls back to the stored lead `permission_ref` if the request omits one.
+- `risk_level` is one of `low`, `medium`, `high`, or `unknown`.
 
 ---
 
 ## 6. Versioning
 
-- **v1.0** — Mock API for frontend PRs 1–4.
-- Future real backend wiring will be versioned as `v2` or through endpoint negotiation in `lib/api/client.ts`.
+- **v1.0** — Live API contract implemented by `services/control-plane` and consumed by `ui/web-console`.
+- Future breaking changes will be versioned through a path prefix (`/api/v2/...`) or endpoint negotiation in `lib/api/client.ts`.
