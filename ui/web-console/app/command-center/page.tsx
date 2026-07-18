@@ -71,7 +71,7 @@ export default function CommandCenterPage() {
           compliance evidence.
         </p>
         <div className="flex flex-wrap gap-3">
-          <ButtonLink href="/leads" variant="primary">
+          <ButtonLink href="/leads/create" variant="primary">
             Create lead
             <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
           </ButtonLink>
