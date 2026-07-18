@@ -40,7 +40,13 @@ export default function LeadDetailPage() {
   const handleRun = async (module: ModuleName) => {
     setRunning(module);
     try {
-      const updated = await run.mutateAsync({ id, body: { modules: [module] } });
+      const updated = await run.mutateAsync({
+        id,
+        body: {
+          modules: [module],
+          ...(lead?.permission_ref ? { permission_ref: lead.permission_ref } : {}),
+        },
+      });
       const resultKey = module.replace(/-/g, "_");
       const result = ((updated as unknown) as Record<string, unknown>)[resultKey] as { status?: string } | undefined;
       const status = result?.status || "unknown";
@@ -125,6 +131,12 @@ export default function LeadDetailPage() {
 
         <Card>
           <h3 className="mb-3 text-sm font-semibold text-foreground">Run module</h3>
+          {!lead.permission_ref && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>No permission reference — module runs may lack legal basis.</span>
+            </div>
+          )}
           <div className="space-y-2">
             {moduleOrder.map(({ label, module }) => {
               const mod = modules?.find((m) => m.name === module);

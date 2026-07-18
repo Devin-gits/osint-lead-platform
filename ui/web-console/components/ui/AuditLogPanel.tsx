@@ -43,14 +43,22 @@ export function AuditLogPanel({ events, className }: AuditLogPanelProps) {
                 className="flex w-full items-center justify-between text-left focus:outline-none"
               >
                 <span className="text-sm text-foreground-secondary">
-                  <span className="font-medium text-foreground">{event.module}</span>{" "}
-                  — {event.status} — {event.legal_basis}
+                  <span className="font-medium text-foreground">{event.module}</span>
+                  {event.tool && <span className="text-foreground-muted"> ({event.tool})</span>}
+                  {" — "}{event.status}{" — "}{event.legal_basis}
                 </span>
-                {expanded.has(event.id) ? (
-                  <ChevronDown className="h-4 w-4 text-foreground-muted" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-foreground-muted" />
-                )}
+                <span className="flex items-center gap-2">
+                  {event.checked_at && (
+                    <span className="hidden text-xs text-foreground-muted sm:inline">
+                      {new Date(event.checked_at).toLocaleString()}
+                    </span>
+                  )}
+                  {expanded.has(event.id) ? (
+                    <ChevronDown className="h-4 w-4 text-foreground-muted" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-foreground-muted" />
+                  )}
+                </span>
               </button>
               {expanded.has(event.id) && event.raw_stderr_json && (
                 <pre className="mt-2 overflow-x-auto rounded bg-surface-elevated p-2 text-xs text-foreground-muted">
