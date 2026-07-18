@@ -2,18 +2,48 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, AlertCircle } from "lucide-react";
+import { ArrowLeft, AlertCircle, Clock } from "lucide-react";
 import { useRun } from "@/lib/api/hooks";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 
+function variantForStatus(status: string) {
+  switch (status) {
+    case "completed":
+      return "success" as const;
+    case "running":
+      return "primary" as const;
+    case "partial":
+      return "warning" as const;
+    case "failed":
+      return "danger" as const;
+    default:
+      return "outline" as const;
+  }
+}
+
+function formatTimestamp(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: run, isLoading, error } = useRun(id);
+
+  // Gentle polling while run is in non-terminal state
+  const isTerminal = run?.status === "completed" || run?.status === "failed" || run?.status === "partial";
+
+  // Note: useRun uses react-query; we modify refetchInterval via the hook's options.
+  // Since we can't pass options dynamically to the existing hook, we'll use the
+  // query client refetch manually if needed. For now, the hook fetches once.
+  // A proper polling approach would require updating the hook signature — out of scope.
+  // Instead we show a hint that data may be stale for running runs.
 
   if (isLoading) {
     return (
@@ -32,7 +62,7 @@ export default function RunDetailPage() {
           <EmptyState
             icon={AlertCircle}
             title="Failed to load run"
-            description={error?.message || "This run does not exist."}
+            description={error?.message || "This run does not exist or the API is unreachable."}
           />
         </Card>
       </div>
@@ -41,18 +71,29 @@ export default function RunDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={`Run ${run.id.slice(0, 8)}`} description={run.error || "Pipeline execution record"}>
-        <Link href="/runs">
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
-            Back to runs
-          </Button>
+      <PageHeader
+        title={`Run ${run.id.slice(0, 8)}`}
+        description={run.error || "Pipeline execution record"}
+      >
+        <Link
+          href="/runs"
+          className="inline-flex items-center rounded-md bg-transparent px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-surface-elevated focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <ArrowLeft className="mr-1.5 h-4 w-4" />
+          Back to runs
         </Link>
       </PageHeader>
 
+      {!isTerminal && (
+        <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-foreground-secondary">
+          <Clock className="h-4 w-4 shrink-0 text-primary" />
+          <span>This run is still in progress. Refresh the page to see updated status.</span>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2 space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={variantForStatus(run.status)}>{run.status}</Badge>
             <Badge variant="secondary" className="capitalize">
               {run.type}
@@ -60,35 +101,95 @@ export default function RunDetailPage() {
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Started" value={new Date(run.started_at).toLocaleString()} />
+            <Field label="Run ID" value={<span className="font-mono text-xs">{run.id}</span>} />
+            <Field label="Started" value={formatTimestamp(run.started_at)} />
             <Field
               label="Finished"
-              value={run.finished_at ? new Date(run.finished_at).toLocaleString() : "—"}
+              value={formatTimestamp(run.finished_at)}
             />
-            <Field label="Legal basis" value={run.legal_basis} />
+            <Field label="Legal basis" value={run.legal_basis || "—"} />
             <Field label="Permission refs" value={run.permission_refs.join(", ") || "—"} />
-            <Field label="Modules executed" value={run.modules_executed.join(", ") || "—"} />
-            <Field label="Audit events" value={run.audit_event_ids.length} />
+            <Field label="Audit event count" value={run.audit_event_ids.length} />
           </div>
-        </Card>
 
-        <Card>
-          <h3 className="mb-3 text-sm font-semibold text-foreground">Leads</h3>
-          {run.lead_ids.length === 0 ? (
-            <p className="text-sm text-foreground-muted">No leads in this run.</p>
-          ) : (
-            <ul className="space-y-2">
-              {run.lead_ids.map((leadId) => (
-                <li key={leadId}>
-                  <Link href={`/leads/${leadId}`} className="text-sm text-primary hover:underline">
-                    {leadId}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+          {run.error && (
+            <div className="rounded-md border border-danger/20 bg-danger/10 p-3 text-sm text-danger">
+              <span className="font-medium">Error:</span> {run.error}
+            </div>
           )}
         </Card>
+
+        <div className="space-y-6">
+          <Card>
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Modules executed</h3>
+            {run.modules_executed.length === 0 ? (
+              <p className="text-sm text-foreground-muted">No modules recorded for this run.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {run.modules_executed.map((mod) => (
+                  <li key={mod} className="flex items-center gap-2 text-sm">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    <Link
+                      href={`/modules/${mod}`}
+                      className="text-primary hover:underline"
+                    >
+                      {mod}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <Card>
+            <h3 className="mb-3 text-sm font-semibold text-foreground">Related leads</h3>
+            {run.lead_ids.length === 0 ? (
+              <p className="text-sm text-foreground-muted">No leads in this run.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {run.lead_ids.map((leadId) => (
+                  <li key={leadId}>
+                    <Link
+                      href={`/leads/${leadId}`}
+                      className="font-mono text-xs text-primary hover:underline"
+                    >
+                      {leadId.slice(0, 12)}...
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </div>
       </div>
+
+      <Card className="space-y-3">
+        <h3 className="text-sm font-semibold text-foreground">Audit events</h3>
+        {run.audit_event_ids.length === 0 ? (
+          <p className="text-sm text-foreground-muted">
+            No per-run audit events in payload. Check individual lead detail pages for audit trails.
+          </p>
+        ) : (
+          <div className="space-y-1.5">
+            <p className="text-xs text-foreground-muted">
+              {run.audit_event_ids.length} audit event{run.audit_event_ids.length !== 1 ? "s" : ""} recorded.
+              View full audit details on individual lead pages.
+            </p>
+            <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+              {run.audit_event_ids.slice(0, 12).map((eventId) => (
+                <li key={eventId} className="font-mono text-xs text-foreground-muted">
+                  {eventId.slice(0, 12)}
+                </li>
+              ))}
+              {run.audit_event_ids.length > 12 && (
+                <li className="text-xs text-foreground-muted">
+                  +{run.audit_event_ids.length - 12} more
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -100,19 +201,4 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="text-sm font-medium text-foreground">{value}</div>
     </div>
   );
-}
-
-function variantForStatus(status: string) {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "running":
-      return "primary";
-    case "partial":
-      return "warning";
-    case "failed":
-      return "danger";
-    default:
-      return "outline";
-  }
 }
