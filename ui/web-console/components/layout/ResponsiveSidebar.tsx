@@ -77,6 +77,7 @@ export function ResponsiveSidebar({ open, onClose, triggerRef }: ResponsiveSideb
   const pathname = usePathname();
   const drawerRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -117,11 +118,16 @@ export function ResponsiveSidebar({ open, onClose, triggerRef }: ResponsiveSideb
   }, [open, handleKeyDown]);
 
   useEffect(() => {
-    if (open) return;
+    const closing = wasOpen.current && !open;
+    wasOpen.current = open;
+    if (!closing) return;
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const timer = setTimeout(
       () => {
-        triggerRef?.current?.focus();
+        const trigger = triggerRef?.current;
+        if (trigger && trigger.offsetParent !== null) {
+          trigger.focus();
+        }
       },
       prefersReducedMotion ? 0 : 210
     );
