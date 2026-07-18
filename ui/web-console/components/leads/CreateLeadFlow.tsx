@@ -1,13 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  ArrowRight,
-  Clock,
-  Loader2,
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock, Loader2 } from "lucide-react";
 import { useCreateLead, useModules, useRunLeadModules } from "@/lib/api/hooks";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Button } from "@/components/ui/Button";
@@ -88,7 +84,8 @@ function hasContact(values: FormState): boolean {
 function validate(values: FormState): FormErrors {
   const errors: FormErrors = {};
   if (!values.permission_ref.trim()) {
-    errors.permission_ref = "Permission reference is required before module selection.";
+    errors.permission_ref =
+      "Permission reference is required before module selection.";
   }
   if (!hasContact(values)) {
     errors.contact =
@@ -112,11 +109,19 @@ export function CreateLeadFlow() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState(false);
   const [selected, setSelected] = useState<Set<ModuleName>>(new Set());
+  const [runError, setRunError] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
   const presetRef = useRef(false);
 
   const create = useCreateLead();
   const runModules = useRunLeadModules();
-  const { data: modules, isLoading: modulesLoading } = useModules();
+  const {
+    data: modules,
+    isLoading: modulesLoading,
+    error: modulesError,
+  } = useModules();
 
   useEffect(() => {
     if (presetRef.current || !modules) return;
@@ -152,7 +157,8 @@ export function CreateLeadFlow() {
     setSelected(next);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (modulesToRun: ModuleName[]) => {
+    setRunError(null);
     const validation = validate(form);
     if (Object.keys(validation).length > 0) {
       setErrors(validation);
@@ -166,7 +172,6 @@ export function CreateLeadFlow() {
         source_id: "",
       });
 
-      const modulesToRun = Array.from(selected);
       if (modulesToRun.length > 0) {
         try {
           await runModules.mutateAsync({
@@ -177,12 +182,14 @@ export function CreateLeadFlow() {
             },
           });
         } catch (runErr) {
-          addToast(
-            runErr instanceof Error
-              ? `Modules started but one or more failed: ${runErr.message}`
-              : "Modules started but one or more failed. Open the lead detail to review.",
-            "warning"
-          );
+          setRunError({
+            id: created.id,
+            message:
+              runErr instanceof Error
+                ? runErr.message
+                : "Module run failed after the lead was created.",
+          });
+          return;
         }
       }
 
@@ -201,7 +208,9 @@ export function CreateLeadFlow() {
         <span
           className={cn(
             "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
-            step >= 1 ? "bg-primary text-background" : "bg-surface-elevated text-foreground-secondary"
+            step >= 1
+              ? "bg-primary text-background"
+              : "bg-surface-elevated text-foreground-secondary"
           )}
           aria-current={step === 1 ? "step" : undefined}
         >
@@ -214,7 +223,9 @@ export function CreateLeadFlow() {
         <span
           className={cn(
             "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
-            step >= 2 ? "bg-primary text-background" : "bg-surface-elevated text-foreground-secondary"
+            step >= 2
+              ? "bg-primary text-background"
+              : "bg-surface-elevated text-foreground-secondary"
           )}
           aria-current={step === 2 ? "step" : undefined}
         >
@@ -330,87 +341,118 @@ export function CreateLeadFlow() {
             started later from the lead detail page.
           </p>
 
-          <div className="mt-6 space-y-3">
-            {modulesLoading && (
-              <p className="text-sm text-foreground-muted">Loading modules…</p>
-            )}
-            {!modulesLoading && modules?.length === 0 && (
-              <p className="text-sm text-foreground-muted">
-                No modules available.
+          {modulesError ? (
+            <div
+              className="mt-4 rounded-md border border-warning/20 bg-warning/10 p-3 text-sm text-warning"
+              role="alert"
+            >
+              <p className="font-medium">Could not load modules</p>
+              <p className="mt-1">{modulesError.message}</p>
+              <p className="mt-1">
+                You can still create the lead without running any modules.
               </p>
-            )}
-            {modules?.map((module) => {
-              const available = module.dev_status === "available";
-              const checked = selected.has(module.name);
-              return (
-                <label
-                  key={module.name}
-                  className={cn(
-                    "flex items-start gap-3 rounded-lg border p-4 transition-colors",
-                    available
-                      ? "cursor-pointer hover:border-primary/30"
-                      : "cursor-not-allowed opacity-60",
-                    checked
-                      ? "border-primary bg-primary/[0.04]"
-                      : "border-border bg-surface"
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
-                    checked={checked}
-                    disabled={!available}
-                    onChange={() => toggleModule(module.name)}
-                    aria-describedby={`${module.name}-hint`}
-                  />
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium text-foreground">
-                        {module.display_name}
-                      </span>
-                      <Badge variant={devStatusVariant(module.dev_status)}>
-                        {devStatusLabel(module.dev_status)}
-                      </Badge>
-                      {available && (
-                        <span className="inline-flex items-center gap-1 text-xs text-foreground-muted">
-                          <Clock className="h-3 w-3" aria-hidden="true" />
-                          {durationHint(module.name)}
+            </div>
+          ) : (
+            <div className="mt-6 space-y-3">
+              {modulesLoading && (
+                <p className="text-sm text-foreground-muted">
+                  Loading modules…
+                </p>
+              )}
+              {!modulesLoading && modules?.length === 0 && (
+                <p className="text-sm text-foreground-muted">
+                  No modules available.
+                </p>
+              )}
+              {modules?.map((module) => {
+                const available = module.dev_status === "available";
+                const checked = selected.has(module.name);
+                return (
+                  <label
+                    key={module.name}
+                    className={cn(
+                      "flex items-start gap-3 rounded-lg border p-4 transition-colors",
+                      available
+                        ? "cursor-pointer hover:border-primary/30"
+                        : "cursor-not-allowed opacity-60",
+                      checked
+                        ? "border-primary bg-primary/[0.04]"
+                        : "border-border bg-surface"
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+                      checked={checked}
+                      disabled={!available}
+                      onChange={() => toggleModule(module.name)}
+                      aria-describedby={`${module.name}-hint`}
+                    />
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-foreground">
+                          {module.display_name}
                         </span>
-                      )}
+                        <Badge variant={devStatusVariant(module.dev_status)}>
+                          {devStatusLabel(module.dev_status)}
+                        </Badge>
+                        {available && (
+                          <span className="inline-flex items-center gap-1 text-xs text-foreground-muted">
+                            <Clock
+                              className="h-3 w-3"
+                              aria-hidden="true"
+                            />
+                            {durationHint(module.name)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-sm text-foreground-muted">
+                        {module.description}
+                      </p>
+                      <p
+                        id={`${module.name}-hint`}
+                        className="mt-1 text-xs text-foreground-muted"
+                      >
+                        Minimum input: {module.min_input_field}
+                      </p>
                     </div>
-                    <p className="mt-1 text-sm text-foreground-muted">
-                      {module.description}
-                    </p>
-                    <p
-                      id={`${module.name}-hint`}
-                      className="mt-1 text-xs text-foreground-muted"
-                    >
-                      Minimum input: {module.min_input_field}
-                    </p>
-                  </div>
-                </label>
-              );
-            })}
-          </div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
 
-          {runModules.error && (
+          {runError && (
             <div
               className="mt-4 rounded-md border border-danger/20 bg-danger/10 p-3 text-sm text-danger"
               role="alert"
             >
-              {runModules.error.message || "Module run failed."}
+              <p className="font-medium">Lead created, but module run failed</p>
+              <p className="mt-1">{runError.message}</p>
+              <p className="mt-2">
+                <Link
+                  href={`/leads/${runError.id}`}
+                  className="font-medium underline hover:no-underline"
+                >
+                  Open lead detail
+                </Link>
+                {" "}to retry or review.
+              </p>
             </div>
           )}
 
           <div className="mt-6 flex justify-end gap-3">
             <Button
               variant="ghost"
-              onClick={handleSubmit}
+              onClick={() => handleSubmit([])}
               disabled={isSubmitting}
             >
               Create without running modules
             </Button>
-            <Button onClick={handleSubmit} disabled={isSubmitting}>
+            <Button
+              onClick={() => handleSubmit(Array.from(selected))}
+              disabled={isSubmitting || modulesError !== null}
+            >
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -419,7 +461,8 @@ export function CreateLeadFlow() {
               ) : (
                 <>
                   Create lead
-                  {selected.size > 0 && ` and run ${selected.size} module${selected.size === 1 ? "" : "s"}`}
+                  {selected.size > 0 &&
+                    ` and run ${selected.size} module${selected.size === 1 ? "" : "s"}`}
                 </>
               )}
             </Button>
