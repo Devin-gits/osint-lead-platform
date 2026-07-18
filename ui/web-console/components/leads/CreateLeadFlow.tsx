@@ -158,6 +158,7 @@ export function CreateLeadFlow() {
   };
 
   const handleSubmit = async (modulesToRun: ModuleName[]) => {
+    if (runError) return; // Lead already created; prevent duplicate
     setRunError(null);
     const validation = validate(form);
     if (Object.keys(validation).length > 0) {
@@ -441,32 +442,43 @@ export function CreateLeadFlow() {
             </div>
           )}
 
-          <div className="mt-6 flex justify-end gap-3">
-            <Button
-              variant="ghost"
-              onClick={() => handleSubmit([])}
-              disabled={isSubmitting}
-            >
-              Create without running modules
-            </Button>
-            <Button
-              onClick={() => handleSubmit(Array.from(selected))}
-              disabled={isSubmitting || modulesError !== null}
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Working…
-                </>
-              ) : (
-                <>
-                  Create lead
-                  {selected.size > 0 &&
-                    ` and run ${selected.size} module${selected.size === 1 ? "" : "s"}`}
-                </>
-              )}
-            </Button>
-          </div>
+          {runError ? (
+            <div className="mt-6 flex justify-end">
+              <Link
+                href={`/leads/${runError.id}`}
+                className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-background transition-colors hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                Open lead detail
+              </Link>
+            </div>
+          ) : (
+            <div className="mt-6 flex justify-end gap-3">
+              <Button
+                variant="ghost"
+                onClick={() => handleSubmit([])}
+                disabled={isSubmitting}
+              >
+                Create without running modules
+              </Button>
+              <Button
+                onClick={() => handleSubmit(Array.from(selected))}
+                disabled={isSubmitting || modulesError !== null}
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Working…
+                  </>
+                ) : (
+                  <>
+                    Create lead
+                    {selected.size > 0 &&
+                      ` and run ${selected.size} module${selected.size === 1 ? "" : "s"}`}
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
         </Card>
       )}
     </div>
