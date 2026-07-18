@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { Input } from "@/components/ui/Input";
@@ -22,18 +22,97 @@ import { Toast } from "@/components/ui/Toast";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { EmptyWorkspaceState } from "@/components/ui/EmptyWorkspaceState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { PipelineStepper } from "@/components/ui/PipelineStepper";
 import { AuditLogPanel } from "@/components/ui/AuditLogPanel";
-import { Info, Trash2 } from "lucide-react";
+import { APIHealthIndicator } from "@/components/ui/APIHealthIndicator";
+import { ResponsiveSidebar } from "@/components/layout/ResponsiveSidebar";
+import { Info, Trash2, Inbox, Menu } from "lucide-react";
 
 export default function StyleGuidePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerTriggerRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div className="space-y-8 pb-12">
       <PageHeader title="Style guide" description="Design-system smoke test for PR1." />
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
+          Responsive sidebar
+        </h2>
+        <Card className="space-y-4 p-4">
+          <ul className="list-inside list-disc text-sm text-foreground-secondary">
+            <li>Expanded sidebar at 1280px+ (14rem width, icon + label).</li>
+            <li>Icon rail at 1024px–1279px (4rem width, labels hidden, tooltips recommended).</li>
+            <li>Mobile drawer below 1024px, opened from the top-bar menu.</li>
+            <li>Esc closes the drawer; focus is trapped while open and restored to the trigger.</li>
+            <li>Reduced motion disables drawer animation.</li>
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <IconButton
+              ref={drawerTriggerRef}
+              icon={Menu}
+              label="Open mobile drawer demo"
+              onClick={() => setDrawerOpen(true)}
+            />
+            <span className="text-sm text-foreground-muted">
+              (Drawer demo is pinned to the left edge of the viewport.)
+            </span>
+          </div>
+          <ResponsiveSidebar
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            triggerRef={drawerTriggerRef}
+          />
+        </Card>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
+          API reachability indicator
+        </h2>
+        <p className="text-sm text-foreground-secondary">
+          Uses the existing <code>GET /api/leads?page_size=1</code> reachability check. It reports
+          &quot;reachable&quot; or &quot;cannot reach&quot;; it does not claim database, runner, or module health.
+        </p>
+        <APIHealthIndicator />
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
+          Empty workspace state
+        </h2>
+        <EmptyWorkspaceState
+          icon={Inbox}
+          title="No leads yet"
+          description="Create a lead to start enrichment. You will need a permission reference before running any module."
+        >
+          <Button>Try an action</Button>
+        </EmptyWorkspaceState>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
+          Focus-visible controls
+        </h2>
+        <p className="text-sm text-foreground-secondary">
+          Tab through the controls below to verify visible focus rings.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button>Primary</Button>
+          <Button variant="secondary">Secondary</Button>
+          <Button variant="ghost">Ghost</Button>
+          <Button variant="danger">Danger</Button>
+          <IconButton icon={Trash2} label="Delete" />
+          <Tooltip content="More info">
+            <Info className="h-5 w-5 text-foreground-muted" />
+          </Tooltip>
+        </div>
+      </section>
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
@@ -188,6 +267,17 @@ export default function StyleGuidePage() {
         <Card>
           <EmptyState title="Nothing to see" description="This is an empty state placeholder." />
         </Card>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-muted">
+          Reduced motion
+        </h2>
+        <p className="text-sm text-foreground-secondary">
+          The stylesheet respects <code>prefers-reduced-motion: reduce</code> by collapsing all
+          transition and animation durations. Drawer animations, button hover transitions, and
+          loading spinners should update instantly when that preference is set.
+        </p>
       </section>
     </div>
   );
