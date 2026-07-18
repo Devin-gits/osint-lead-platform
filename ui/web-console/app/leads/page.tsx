@@ -3,19 +3,24 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Users, AlertTriangle, X } from "lucide-react";
-import { useLeads, useCreateLead, useModules, useRunPipeline } from "@/lib/api/hooks";
+import {
+  Plus,
+  Search,
+  Users,
+  X,
+  Loader2,
+  AlertTriangle,
+} from "lucide-react";
+import { useLeads, useModules, useRunPipeline } from "@/lib/api/hooks";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
-import { Dialog } from "@/components/ui/Dialog";
 import { Badge } from "@/components/ui/Badge";
-import { StatusChip } from "@/components/ui/StatusChip";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { EmptyWorkspaceState } from "@/components/ui/EmptyWorkspaceState";
 import {
   Table,
   TableBody,
@@ -24,8 +29,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/Table";
-import { cn } from "@/lib/utils/cn";
-import { RiskLevel, ModuleName } from "@/lib/api/types";
+import { LeadReadinessCell } from "@/components/leads/LeadReadinessCell";
+import { PermissionReferenceInline } from "@/components/leads/PermissionReferenceField";
+import type { LeadSummary, RiskLevel, ModuleName } from "@/lib/api/types";
 
 const stageOptions = [
   { value: "", label: "All stages" },
@@ -51,14 +57,36 @@ const moduleStatusOptions = [
   { value: "not_run", label: "not run" },
 ];
 
+function riskVariant(level: RiskLevel) {
+  switch (level) {
+    case "low":
+      return "success";
+    case "medium":
+      return "warning";
+    case "high":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
+
+function formatDate(iso?: string) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function useAvailableModules() {
   const { data: modules } = useModules();
   return useMemo(() => {
-    return (
-      modules
-        ?.filter((m) => m.dev_status === "available")
-        .map((m) => ({ name: m.name, label: m.display_name })) ?? []
-    );
+    return modules?.filter((m) => m.dev_status === "available") ?? [];
   }, [modules]);
 }
 
@@ -73,36 +101,39 @@ export default function LeadsPage() {
     page: 1,
     page_size: 25,
   });
-  const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    company: "",
-    domain: "",
-    permission_ref: "",
-  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const { data, isLoading, error } = useLeads(filters);
-  const create = useCreateLead();
   const availableModules = useAvailableModules();
   const pipeline = useRunPipeline();
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const created = await create.mutateAsync({
-        ...form,
-        source_id: "",
-      });
-      addToast("Lead created", "success");
-      setCreateOpen(false);
-      setForm({ name: "", email: "", phone: "", company: "", domain: "", permission_ref: "" });
-      router.push(`/leads/${created.id}`);
-    } catch {
-      // mutation error surfaces via create.error
-    }
+  const leads: LeadSummary[] = data?.data ?? [];
+  const meta = data?.meta;
+  const hasActiveFilters =
+    filters.stage || filters.risk || filters.module_status || filters.q;
+
+  const allSelected = leads.length > 0 && selected.size === leads.length;
+
+  const selectedLeads = leads.filter((l) => selected.has(l.id));
+
+  const canRunBulk =
+    selected.size > 0 && selectedLeads.every((l) => l.permission_ref);
+
+  const updateFilter = (key: string, value: string) => {
+    setFilters((prev) => ({ ...prev, [key]: value, page: 1 }));
+    setSelected(new Set());
+  };
+
+  const clearFilters = () => {
+    setFilters({
+      stage: "",
+      risk: "",
+      module_status: "",
+      q: "",
+      page: 1,
+      page_size: 25,
+    });
+    setSelected(new Set());
   };
 
   const toggleSelect = (id: string) => {
@@ -113,27 +144,25 @@ export default function LeadsPage() {
   };
 
   const toggleAll = () => {
-    if (!data) return;
-    if (selected.size === data.data.length) {
+    if (allSelected) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(data.data.map((l) => l.id)));
+      setSelected(new Set(leads.map((l) => l.id)));
     }
   };
 
   const clearSelection = () => setSelected(new Set());
 
-  const runBulk = async (module: ModuleName) => {
-    if (selected.size === 0) return;
+  const runBulk = async (moduleName: ModuleName, displayName: string) => {
+    if (!canRunBulk) return;
     try {
-      const body = {
+      const res = await pipeline.mutateAsync({
         lead_ids: Array.from(selected),
-        modules: [module],
-      };
-      const res = await pipeline.mutateAsync(body);
+        modules: [moduleName],
+      });
       addToast(
         <span>
-          Pipeline started for {selected.size} lead(s).{" "}
+          Started {displayName} for {selected.size} lead(s).{" "}
           <Link
             href={`/runs/${res.run_id}`}
             className="underline hover:no-underline"
@@ -152,281 +181,330 @@ export default function LeadsPage() {
     }
   };
 
-  const stages = ["raw", "enriched", "validated", "crm_ready"];
-  const countsByStage: Record<string, number> = {};
-  data?.data.forEach((lead) => {
-    countsByStage[lead.stage] = (countsByStage[lead.stage] || 0) + 1;
-  });
+  const handleRowClick = (id: string) => {
+    router.push(`/leads/${id}`);
+  };
 
-  const allSelected = data?.data.length ? selected.size === data.data.length : false;
+  const handleRowKeyDown = (e: React.KeyboardEvent, id: string) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handleRowClick(id);
+    }
+  };
+
+  const emptyState = (
+    <EmptyWorkspaceState
+      icon={Users}
+      title="No leads yet"
+      description="Create a permissioned lead before running checks, or explore available modules to see what the platform can do."
+      primaryAction={{ label: "Create lead", href: "/leads/create" }}
+      secondaryAction={{ label: "Explore modules", href: "/modules" }}
+    />
+  );
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Leads" description="Manage and inspect enriched leads.">
-        <Button onClick={() => setCreateOpen(true)} size="sm">
+      <PageHeader
+        title="Leads"
+        description="Manage and inspect permissioned leads."
+      >
+        <Link
+          href="/leads/create"
+          className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-background transition-colors hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
           <Plus className="mr-1.5 h-4 w-4" />
           Create lead
-        </Button>
+        </Link>
       </PageHeader>
 
-      <Card className="p-4">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Select
-            label="Stage"
-            options={stageOptions}
-            value={filters.stage}
-            onChange={(e) => setFilters({ ...filters, stage: e.target.value, page: 1 })}
-          />
-          <Select
-            label="Risk level"
-            options={riskOptions}
-            value={filters.risk}
-            onChange={(e) => setFilters({ ...filters, risk: e.target.value, page: 1 })}
-          />
-          <Select
-            label="Module status"
-            options={moduleStatusOptions}
-            value={filters.module_status}
-            onChange={(e) => setFilters({ ...filters, module_status: e.target.value, page: 1 })}
-          />
-          <div className="relative">
-            <Input
-              label="Search"
-              placeholder="Name, email, company, domain"
-              value={filters.q}
-              onChange={(e) => setFilters({ ...filters, q: e.target.value, page: 1 })}
-            />
-            <Search className="pointer-events-none absolute right-3 top-8 h-4 w-4 text-foreground-muted" />
+      {isLoading ? (
+        <Card className="p-4">
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
           </div>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <h3 className="mb-3 text-sm font-semibold text-foreground">
-          Stage funnel <span className="font-normal text-foreground-muted">(on this page)</span>
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {stages.map((stage) => {
-            const count = countsByStage[stage] || 0;
-            const active = filters.stage === stage;
-            return (
-              <button
-                key={stage}
-                onClick={() => setFilters({ ...filters, stage: active ? "" : stage, page: 1 })}
-                className={cn(
-                  "flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors",
-                  active
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-surface text-foreground-secondary hover:bg-surface-elevated"
-                )}
-              >
-                <span className="capitalize">{stage.replace("_", " ")}</span>
-                <Badge variant={active ? "primary" : "outline"}>{count}</Badge>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      {error && (
+        </Card>
+      ) : error ? (
         <div className="rounded-md border border-danger/20 bg-danger/10 p-4 text-sm text-danger">
           Failed to load leads: {error.message}
         </div>
-      )}
-
-      {selected.size > 0 && (
-        <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
-          <div className="flex items-center gap-2 text-sm text-foreground">
-            <span className="font-medium">{selected.size}</span> selected
-            <Button size="sm" variant="ghost" onClick={clearSelection}>
-              <X className="mr-1 h-3.5 w-3.5" />
-              Clear
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {availableModules.map(({ name, label }) => (
+      ) : leads.length === 0 ? (
+        <Card className="p-4">
+          {hasActiveFilters ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <p className="text-foreground">No leads match your filters.</p>
               <Button
-                key={name}
+                variant="ghost"
                 size="sm"
-                variant="secondary"
-                disabled={pipeline.isPending}
-                onClick={() => runBulk(name)}
+                onClick={clearFilters}
+                className="mt-3"
               >
-                {pipeline.isPending ? "Running…" : `Run ${label}`}
+                <X className="mr-1 h-4 w-4" />
+                Clear filters
               </Button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            emptyState
+          )}
         </Card>
-      )}
-
-      <Card>
-        {isLoading ? (
-          <div className="space-y-3 p-4">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-          </div>
-        ) : data?.data.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="No leads yet"
-            description="Create a lead to start enrichment."
-          />
-        ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeader className="w-10">
-                  <input
-                    type="checkbox"
-                    aria-label="Select all leads"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
+      ) : (
+        <>
+          <Card className="p-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+              <div className="sm:col-span-2 lg:col-span-2">
+                <div className="relative">
+                  <Input
+                    label="Search"
+                    placeholder="Name, email, company, domain"
+                    value={filters.q}
+                    onChange={(e) => updateFilter("q", e.target.value)}
                   />
-                </TableHeader>
-                <TableHeader>Contact</TableHeader>
-                <TableHeader>Company</TableHeader>
-                <TableHeader>Stage</TableHeader>
-                <TableHeader>Risk</TableHeader>
-                <TableHeader>Modules</TableHeader>
-                <TableHeader>Permission ref</TableHeader>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {data?.data.map((lead) => (
-                <TableRow
-                  key={lead.id}
-                  onClick={() => router.push(`/leads/${lead.id}`)}
-                  className="cursor-pointer"
+                  <Search className="pointer-events-none absolute right-3 top-8 h-4 w-4 text-foreground-muted" />
+                </div>
+              </div>
+              <Select
+                label="Stage"
+                options={stageOptions}
+                value={filters.stage}
+                onChange={(e) => updateFilter("stage", e.target.value)}
+              />
+              <Select
+                label="Risk level"
+                options={riskOptions}
+                value={filters.risk}
+                onChange={(e) => updateFilter("risk", e.target.value)}
+              />
+              <Select
+                label="Module status"
+                options={moduleStatusOptions}
+                value={filters.module_status}
+                onChange={(e) => updateFilter("module_status", e.target.value)}
+              />
+            </div>
+          </Card>
+
+          {selected.size > 0 && (
+            <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
+              <div className="flex items-center gap-2 text-sm text-foreground">
+                <span className="font-medium">{selected.size}</span> selected
+                {!canRunBulk && (
+                  <span
+                    className="inline-flex items-center gap-1 text-xs text-warning"
+                    title="All selected leads must have a permission reference"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Missing permission ref
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={clearSelection}
                 >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <X className="mr-1 h-3.5 w-3.5" />
+                  Clear
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {availableModules.map((m) => (
+                  <Button
+                    key={m.name}
+                    size="sm"
+                    variant="secondary"
+                    disabled={!canRunBulk || pipeline.isPending}
+                    onClick={() => runBulk(m.name, m.display_name)}
+                    title={
+                      canRunBulk
+                        ? `Run ${m.display_name} on selected leads`
+                        : "All selected leads must have a permission reference"
+                    }
+                  >
+                    {pipeline.isPending ? (
+                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    Run {m.display_name}
+                  </Button>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Desktop table */}
+          <Card className="hidden md:block">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeader className="w-10">
                     <input
                       type="checkbox"
-                      aria-label={`Select lead ${lead.name || lead.id}`}
-                      checked={selected.has(lead.id)}
-                      onChange={() => toggleSelect(lead.id)}
+                      aria-label="Select all leads"
+                      checked={allSelected}
+                      onChange={toggleAll}
                       className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
                     />
-                  </TableCell>
-                  <TableCell>
-                    <div className="font-medium text-foreground">{lead.name || "—"}</div>
-                    <div className="text-xs text-foreground-muted">{lead.email || lead.domain || lead.id}</div>
-                  </TableCell>
-                  <TableCell>{lead.company || "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="capitalize">
-                      {lead.stage.replace("_", " ")}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <RiskBadge level={lead.risk_level} />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {["email_validate", "phone_validate", "domain_intel", "social_footprint"].map((key) => {
-                        const result = (lead as Record<string, unknown>)[key] as { status?: string } | undefined;
-                        const status = result?.status || "not_run";
-                        return (
-                          <StatusChip
-                            key={key}
-                            status={status as "ok" | "unknown" | "skipped" | "pending" | "not_run"}
-                            className="text-[10px]"
-                          />
-                        );
-                      })}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <PermissionRefCell permissionRef={lead.permission_ref} />
-                  </TableCell>
+                  </TableHeader>
+                  <TableHeader>Lead</TableHeader>
+                  <TableHeader>Stage</TableHeader>
+                  <TableHeader>Risk</TableHeader>
+                  <TableHeader>Permission ref</TableHeader>
+                  <TableHeader>Readiness</TableHeader>
+                  <TableHeader>Updated</TableHeader>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Card>
+              </TableHead>
+              <TableBody>
+                {leads.map((lead) => (
+                  <TableRow
+                    key={lead.id}
+                    onClick={() => handleRowClick(lead.id)}
+                    onKeyDown={(e) => handleRowKeyDown(e, lead.id)}
+                    tabIndex={0}
+                    className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select lead ${lead.name || lead.id}`}
+                        checked={selected.has(lead.id)}
+                        onChange={() => toggleSelect(lead.id)}
+                        className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium text-foreground">
+                        {lead.name || "—"}
+                      </div>
+                      <div className="text-xs text-foreground-muted">
+                        {lead.email || lead.domain || lead.company || lead.id}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="capitalize">
+                        {lead.stage.replace("_", " ")}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={riskVariant(lead.risk_level)}>
+                        {lead.risk_level}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <PermissionReferenceInline
+                        permissionRef={lead.permission_ref}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <LeadReadinessCell lead={lead} />
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm text-foreground-secondary">
+                        {formatDate(lead.updated_at)}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
 
-      {data?.meta && data.meta.total > 0 && (
-        <div className="flex items-center justify-between text-sm text-foreground-muted">
-          <span>
-            Showing {(data.meta.page - 1) * data.meta.page_size + 1} -{" "}
-            {Math.min(data.meta.page * data.meta.page_size, data.meta.total)} of {data.meta.total}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={data.meta.page <= 1}
-              onClick={() => setFilters({ ...filters, page: data.meta.page - 1 })}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={data.meta.page * data.meta.page_size >= data.meta.total}
-              onClick={() => setFilters({ ...filters, page: data.meta.page + 1 })}
-            >
-              Next
-            </Button>
+          {/* Mobile card list */}
+          <div className="space-y-3 md:hidden">
+            {leads.map((lead) => (
+              <Card
+                key={lead.id}
+                className="p-4 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                tabIndex={0}
+                onClick={() => handleRowClick(lead.id)}
+                onKeyDown={(e) => handleRowKeyDown(e, lead.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-foreground">
+                      {lead.name || "—"}
+                    </div>
+                    <div className="text-xs text-foreground-muted">
+                      {lead.email || lead.domain || lead.company || lead.id}
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select lead ${lead.name || lead.id}`}
+                    checked={selected.has(lead.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      toggleSelect(lead.id);
+                    }}
+                    className="h-4 w-4 rounded border-border bg-surface text-primary focus:ring-primary/50"
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-foreground-muted">Stage</span>
+                    <div>
+                      <Badge variant="secondary" className="capitalize">
+                        {lead.stage.replace("_", " ")}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-foreground-muted">Risk</span>
+                    <div>
+                      <Badge variant={riskVariant(lead.risk_level)}>
+                        {lead.risk_level}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-foreground-muted">Permission ref</span>
+                  <div>
+                    <PermissionReferenceInline permissionRef={lead.permission_ref} />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <span className="text-foreground-muted">Readiness</span>
+                  <LeadReadinessCell lead={lead} />
+                </div>
+                <div className="mt-3 text-xs text-foreground-muted">
+                  Updated {formatDate(lead.updated_at)}
+                </div>
+              </Card>
+            ))}
           </div>
-        </div>
-      )}
 
-      <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create lead">
-        <form onSubmit={handleCreate} className="space-y-4">
-          <Input label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <Input
-            label="Email"
-            type="email"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-          <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <Input label="Company" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
-          <Input label="Domain" value={form.domain} onChange={(e) => setForm({ ...form, domain: e.target.value })} />
-          <div>
-            <Input
-              label="Permission ref"
-              value={form.permission_ref}
-              onChange={(e) => setForm({ ...form, permission_ref: e.target.value })}
-            />
-            <p className="mt-1 text-xs text-foreground-muted">
-              A permission_ref is required for compliant enrichment and is logged in every audit event.
-            </p>
-          </div>
-          {create.error && (
-            <div className="text-sm text-danger">{create.error.message}</div>
+          {meta && meta.total > 0 && (
+            <div className="flex items-center justify-between text-sm text-foreground-muted">
+              <span>
+                Showing {(meta.page - 1) * meta.page_size + 1} -{" "}
+                {Math.min(meta.page * meta.page_size, meta.total)} of{" "}
+                {meta.total}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={meta.page <= 1}
+                  onClick={() =>
+                    setFilters((prev) => ({ ...prev, page: meta.page - 1 }))
+                  }
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={meta.page * meta.page_size >= meta.total}
+                  onClick={() =>
+                    setFilters((prev) => ({ ...prev, page: meta.page + 1 }))
+                  }
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Creating…" : "Create"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+        </>
+      )}
     </div>
-  );
-}
-
-function RiskBadge({ level }: { level: RiskLevel }) {
-  const variant =
-    level === "low" ? "success" : level === "medium" ? "warning" : level === "high" ? "danger" : "outline";
-  return <Badge variant={variant}>{level}</Badge>;
-}
-
-function PermissionRefCell({ permissionRef }: { permissionRef?: string }) {
-  if (permissionRef) {
-    return <span className="text-sm text-foreground-secondary">{permissionRef}</span>;
-  }
-  return (
-    <Badge variant="warning" className="gap-1">
-      <AlertTriangle className="h-3 w-3" />
-      Missing
-    </Badge>
   );
 }
