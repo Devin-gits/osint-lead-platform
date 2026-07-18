@@ -43,7 +43,7 @@ func main() {
 	reg := registry.New()
 	srv := httpapi.NewServer(st, r, reg)
 
-	addr := ":" + cfg.Port
+	addr := cfg.ListenHost + ":" + cfg.Port
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),

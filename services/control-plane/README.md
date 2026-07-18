@@ -27,6 +27,7 @@ leads, audit events, and pipeline runs.
 |----------|---------|-------------|
 | `DATABASE_URL` | — | Postgres URL, e.g. `postgres://user:pass@localhost/osint?sslmode=disable` |
 | `PORT` | `8080` | HTTP port |
+| `LISTEN_HOST` | `127.0.0.1` | Bind address. Default is loopback only (pre-production). Set to `0.0.0.0` for real deployment. |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
 | `MODULE_TIMEOUT` | `90s` | Shared timeout for email/phone and floor for domain-intel (60s). Social-footprint ignores this and uses its own 90s per-handle default. |
 | `HTTP_READ_TIMEOUT` | `30s` | HTTP server read timeout |
@@ -50,6 +51,20 @@ go run ./cmd/server
 # With in-memory store (no DATABASE_URL)
 go run ./cmd/server
 ```
+
+By default the server binds to **127.0.0.1:8080** (loopback only).
+To bind on all interfaces for real deployment, set `LISTEN_HOST=0.0.0.0`.
+
+### CORS and localhost vs 127.0.0.1
+
+The default CORS origin is `http://localhost:3000`. Browsers treat
+`http://localhost:3000` and `http://127.0.0.1:3000` as **different origins**.
+
+- If the UI is started with `npx next start -H 127.0.0.1 -p 3000`, open it
+  via **http://localhost:3000** (not http://127.0.0.1:3000) so the browser
+  origin matches the CORS header.
+- Alternatively, set `CORS_ORIGIN=http://127.0.0.1:3000` to match the
+  browser origin if you navigate via 127.0.0.1.
 
 ## Test
 
