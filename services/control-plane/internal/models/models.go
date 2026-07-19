@@ -41,6 +41,7 @@ type RawLead struct {
 	Phone         string `json:"phone"`
 	Company       string `json:"company"`
 	Domain        string `json:"domain"`
+	URL           string `json:"url"`
 	SourceID      string `json:"source_id"`
 	PermissionRef string `json:"permission_ref"`
 }
@@ -55,6 +56,7 @@ type Lead struct {
 	Phone         string         `json:"phone"`
 	Company       string         `json:"company"`
 	Domain        string         `json:"domain"`
+	URL           string         `json:"url"`
 	SourceID      string         `json:"source_id"`
 	PermissionRef string         `json:"permission_ref"`
 	Stage         string         `json:"stage"`
@@ -73,6 +75,7 @@ type Subject struct {
 	Domain        string `json:"domain,omitempty"`
 	PhoneRedacted string `json:"phone_redacted,omitempty"`
 	Handle        string `json:"handle,omitempty"`
+	URL           string `json:"url,omitempty"`
 }
 
 // AuditEvent is one structured audit line. raw_stderr_json preserves the

@@ -14,6 +14,10 @@ Per the Stage 2 decision (`docs/decisions/extraction-stage-2-plan.md`):
 - **Secondary backend:** [Firecrawl](https://www.firecrawl.dev/) hosted API —
   optional adapter only, enabled when `EXTRACTION_BACKEND=firecrawl` and
   `FIRECRAWL_API_KEY` is set. No Firecrawl server code is vendored.
+- **Control-plane integration:** the module is wired as an in-process Go
+  library from `services/control-plane` (Pass 2B). The control-plane runner
+  passes `url` and `permission_ref` from the lead and stores the `extraction`
+  result + audit event.
 
 ## Install
 

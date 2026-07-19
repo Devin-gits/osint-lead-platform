@@ -68,12 +68,12 @@ func New() *Registry {
 			Name:          models.ModuleExtraction,
 			DisplayName:   "Lead Extraction",
 			Category:      "ingest",
-			DevStatus:     "planned",
+			DevStatus:     "available",
 			NamespacedKey: "extraction",
-			BackingTools:  []string{},
-			Description:   "Parse and normalise raw lead payloads into the canonical schema.",
-			MinInputField: "raw_payload",
-			RiskLevelNote: "Low: normalisation only.",
+			BackingTools:  []string{"unclecode/crawl4ai@v0.9.2 (CLI subprocess)", "firecrawl.dev/v1/scrape (optional HTTP adapter)"},
+			Description:   "Extract low-risk public fields (company, emails, phones, social/contact links, title, description) from one customer-supplied, permissioned public URL.",
+			MinInputField: "url",
+			RiskLevelNote: "Low-Medium: fetches a public page; SSRF controls, no auth crawl, no recursion, raw content bounded to 100 KB.",
 		},
 		{
 			Name:          models.ModuleCompanyEnrich,
@@ -102,8 +102,10 @@ func New() *Registry {
 			"If Python or the wrapper is unavailable, the module degrades each handle to status 'unknown' with an error note but does not crash the pipeline. " +
 			"Each handle produces one audit record with the handle checked, tool, status and legal basis. " +
 			"Results are namespaced under the `social_footprint` key.",
-		models.ModuleExtraction:      "Planned for a future PR.",
-		models.ModuleCompanyEnrich:   "Planned for a future PR.",
+		models.ModuleExtraction: "Fetches one permissioned public URL per lead and extracts low-risk business contact/identity signals. " +
+			"Requires `url` and `permission_ref`. Default backend is Crawl4AI (local Python subprocess); Firecrawl is optional via `EXTRACTION_BACKEND=firecrawl` and `FIRECRAWL_API_KEY`. " +
+			"SSRF controls block private/link-local/metadata IPs, non-standard ports, and credentialed URLs. Raw markdown is capped at 100 KB and not written to audit logs.",
+		models.ModuleCompanyEnrich: "Planned for a future PR.",
 	}
 
 	return &Registry{modules: modules, docs: docs}
