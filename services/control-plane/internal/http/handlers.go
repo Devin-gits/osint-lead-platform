@@ -12,6 +12,7 @@ import (
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/readiness"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/risk"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/runner"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
@@ -93,7 +94,7 @@ func (s *Server) handleCreateLead(w http.ResponseWriter, r *http.Request) {
 		mapStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, response{Data: leadToJSON(created, false)})
+	writeJSON(w, http.StatusCreated, response{Data: s.leadToJSON(created, false)})
 }
 
 func (s *Server) handleListLeads(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +115,7 @@ func (s *Server) handleListLeads(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]map[string]any, len(leads))
 	for i, l := range leads {
-		out[i] = leadToJSON(l, false)
+		out[i] = s.leadToJSON(l, false)
 	}
 	writeJSON(w, http.StatusOK, response{
 		Data: out,
@@ -142,7 +143,7 @@ func (s *Server) handleGetLead(w http.ResponseWriter, r *http.Request) {
 	}
 	lead.AuditEvents = events
 
-	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+	writeJSON(w, http.StatusOK, response{Data: s.leadToJSON(lead, true)})
 }
 
 func (s *Server) handleRunModules(w http.ResponseWriter, r *http.Request) {
@@ -168,20 +169,20 @@ func (s *Server) handleRunModules(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lead, err := s.runner.RunSingle(r.Context(), id, req)
+	run, err := s.runner.SubmitSingle(r.Context(), id, req)
 	if err != nil {
+		if err == runner.ErrRunInProgress {
+			writeError(w, http.StatusConflict, "run_in_progress", "lead already has an active run")
+			return
+		}
 		mapStoreError(w, err)
 		return
 	}
 
-	events, err := s.store.ListAuditEventsByLead(r.Context(), id)
-	if err != nil {
-		mapStoreError(w, err)
-		return
-	}
-	lead.AuditEvents = events
-
-	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+	writeJSON(w, http.StatusAccepted, response{Data: map[string]any{
+		"run_id": run.ID,
+		"status": run.Status,
+	}})
 }
 
 func (s *Server) handleListModules(w http.ResponseWriter, r *http.Request) {
@@ -281,8 +282,12 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	run, err := s.runner.RunBatch(r.Context(), req)
+	run, err := s.runner.SubmitBatch(r.Context(), req)
 	if err != nil {
+		if err == runner.ErrRunInProgress {
+			writeError(w, http.StatusConflict, "run_in_progress", "one or more leads already have an active run")
+			return
+		}
 		mapStoreError(w, err)
 		return
 	}
@@ -290,6 +295,7 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, response{Data: map[string]any{
 		"accepted": true,
 		"run_id":   run.ID,
+		"status":   run.Status,
 	}})
 }
 
@@ -372,7 +378,7 @@ func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
 	}
 	lead.AuditEvents = events
 
-	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+	writeJSON(w, http.StatusOK, response{Data: s.leadToJSON(lead, true)})
 }
 
 func (s *Server) handleDemote(w http.ResponseWriter, r *http.Request) {
@@ -422,7 +428,7 @@ func (s *Server) handleDemote(w http.ResponseWriter, r *http.Request) {
 	}
 	lead.AuditEvents = events
 
-	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+	writeJSON(w, http.StatusOK, response{Data: s.leadToJSON(lead, true)})
 }
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
@@ -527,7 +533,7 @@ func parseInt(s string, def int) int {
 // leadToJSON converts a Lead to the JSON shape the frontend expects: module
 // result keys are flattened to the top level and the internal Results map is
 // omitted. Audit events are included only when withAudit is true.
-func leadToJSON(lead models.Lead, withAudit bool) map[string]any {
+func (s *Server) leadToJSON(lead models.Lead, withAudit bool) map[string]any {
 	m := map[string]any{
 		"id":             lead.ID,
 		"name":           lead.Name,
@@ -546,6 +552,9 @@ func leadToJSON(lead models.Lead, withAudit bool) map[string]any {
 	}
 	if lead.RiskScore == nil {
 		delete(m, "risk_score")
+	}
+	if active := s.runner.ActiveRun(lead.ID); active != "" {
+		m["active_run_id"] = active
 	}
 	for k, v := range lead.Results {
 		m[k] = v

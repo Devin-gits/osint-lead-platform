@@ -40,6 +40,9 @@ func main() {
 	}
 
 	r := runner.New(st, cfg.ModuleTimeout)
+	r.Start(context.Background(), cfg.Workers)
+	defer r.Stop()
+
 	reg := registry.New()
 	srv := httpapi.NewServer(st, r, reg)
 
@@ -53,7 +56,7 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("control-plane listening on %s (CORS origin: %s)", addr, cfg.CORSOrigin)
+		log.Printf("control-plane listening on %s (CORS origin: %s) with %d worker(s)", addr, cfg.CORSOrigin, cfg.Workers)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}

@@ -18,6 +18,7 @@ type Config struct {
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
+	Workers           int
 }
 
 // Load reads configuration from the environment and returns sane defaults.
@@ -41,6 +42,14 @@ func Load() (*Config, error) {
 	}
 	if cfg.CORSOrigin == "" {
 		cfg.CORSOrigin = "http://localhost:3000"
+	}
+	cfg.Workers = 2
+	if v := os.Getenv("CONTROL_PLANE_WORKERS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("invalid CONTROL_PLANE_WORKERS: %s", v)
+		}
+		cfg.Workers = n
 	}
 
 	timeouts := []struct {

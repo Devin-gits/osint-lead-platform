@@ -45,14 +45,27 @@ create_lead() {
     -d "$1" | jq -r '.data.id // empty'
 }
 
-# Helper: run a module and return the namespaced result key
+# Helper: enqueue a module run, poll until terminal, and return the namespaced result key
 run_module() {
   local lead_id=$1
   local module=$2
   local key=${3:-${module//-/_}}
-  curl -s -X POST "${BASE_URL}/api/leads/${lead_id}/run" \
+  local run_id
+  run_id=$(curl -s -X POST "${BASE_URL}/api/leads/${lead_id}/run" \
     -H 'Content-Type: application/json' \
-    -d "{\"modules\":[\"${module}\"]}" | jq -r ".data.${key} // empty"
+    -d "{\"modules\":[\"${module}\"]}" | jq -r '.data.run_id // empty')
+  if [ -z "$run_id" ]; then
+    echo "ERROR: no run_id returned for ${module}" >&2
+    return 1
+  fi
+  for i in {1..60}; do
+    status=$(curl -s "${BASE_URL}/api/runs/${run_id}" | jq -r '.data.status // empty')
+    if [ "$status" = "completed" ] || [ "$status" = "partial" ] || [ "$status" = "failed" ]; then
+      break
+    fi
+    sleep 1
+  done
+  curl -s "${BASE_URL}/api/leads/${lead_id}" | jq -r ".data.${key} // empty"
 }
 
 # 1. Company enrich: domain + company + permission_ref => ok

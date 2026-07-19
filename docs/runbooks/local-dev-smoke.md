@@ -136,6 +136,34 @@ after: low <score>
 ==> smoke-risk passed
 ```
 
+### Async worker smoke
+
+```bash
+make smoke-async
+# or
+./scripts/smoke-async.sh
+```
+
+Expected output:
+
+```text
+==> Smoke target: http://localhost:8080
+==> lead <id>
+==> enqueuing email-validate (expect 202 + run_id)
+==> run <id> queued
+==> polling run status
+run status: running
+run status: completed
+==> lead has results and recomputed risk
+{
+  "stage": "validated",
+  "risk_level": "low",
+  "risk_score": 0,
+  "email_validate": { "status": "ok" }
+}
+==> smoke-async passed
+```
+
 ## 5. Manual UI checks
 
 1. Open `http://localhost:3000/modules` — `company-enrich` should show
@@ -146,8 +174,10 @@ after: low <score>
    - `permission_ref`: `SMOKE-UI-1`
 3. Open the lead detail page.
 4. Click the **Company** tab → **Run company enrich**.
+   - The **Run module** panel shows a banner with the run id and status
+     (`queued` → `running` → `completed`).
    - Expect status `ok`, `name: Example`, `website: https://example.com`,
-     `stage` updated to `enriched`.
+     `stage` updated to `enriched` once the run completes.
 5. Create a second lead with only:
    - `domain`: `example.com`
    - `permission_ref`: `SMOKE-UI-2`
