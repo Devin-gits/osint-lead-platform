@@ -44,6 +44,7 @@ HTTP status codes:
 | `202` | `POST /api/pipelines/run` accepted — poll `GET /api/runs/{id}` |
 | `400` | Bad request / missing required query or body field |
 | `404` | Resource not found (`lead`, `module`, `run`) |
+| `409` | Lead not ready for promotion/export (`/promote`, `/export`) |
 | `500` | Unexpected server error |
 
 ### Pagination
@@ -70,7 +71,7 @@ export type PipelineStage =
 
 export type RiskLevel = "low" | "medium" | "high" | "unknown";
 
-export type ModuleStatus = "ok" | "unknown" | "skipped" | "pending" | "not_run";
+export type ModuleStatus = "ok" | "partial" | "unknown" | "skipped" | "pending" | "not_run" | "error";
 
 export interface RawLead {
   id: string;
@@ -356,6 +357,49 @@ export interface PipelineRun {
   legal_basis: string;
   permission_refs: string[];
 }
+
+export interface ReadinessCheck {
+  name: string;
+  pass: boolean;
+  message: string;
+  required: boolean;
+}
+
+export interface ReadinessReport {
+  ready: boolean;
+  stage: PipelineStage;
+  suggested_stage: PipelineStage;
+  warning?: string;
+  checks: ReadinessCheck[];
+}
+
+export interface ExportResponse {
+  format: "crm_stub_v1";
+  exported_at: string;
+  legal_basis: string;
+  permission_ref?: string;
+  lead: {
+    id: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+    domain?: string;
+    url?: string;
+    source_id?: string;
+    stage: PipelineStage;
+    risk_level: RiskLevel;
+  };
+  enrichment: {
+    email_validate?: EmailValidateResult;
+    phone_validate?: PhoneValidateResult;
+    domain_intel?: DomainIntelResult;
+    social_footprint?: SocialFootprintResult;
+    extraction?: ExtractionResult;
+    company_enrich?: CompanyEnrichResult;
+  };
+  readiness: ReadinessReport;
+}
 ```
 
 ### Module result types as namespaced keys
@@ -530,6 +574,92 @@ Run one or more modules on a single lead. Returns the full `LeadRecord` with `au
   }
 }
 ```
+
+### `GET /api/leads/{id}/readiness`
+
+Idempotent readiness report for a lead.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "ready": false,
+    "stage": "validated",
+    "suggested_stage": "validated",
+    "warning": "risk_level is unknown; promotion is allowed but should be reviewed",
+    "checks": [
+      { "name": "permission_ref", "pass": true, "message": "permission_ref is set", "required": true },
+      { "name": "identity_contact", "pass": true, "message": "email is present", "required": true },
+      { "name": "email_validate", "pass": false, "message": "email_validate status is '', expected ok", "required": true },
+      { "name": "company_context", "pass": true, "message": "company context present (company_enrich partial)", "required": true },
+      { "name": "risk_ceiling", "pass": true, "message": "risk_level is not high", "required": true },
+      { "name": "no_required_channel_error", "pass": true, "message": "no errors on required channels", "required": true }
+    ]
+  }
+}
+```
+
+### `POST /api/leads/{id}/promote`
+
+Promote a lead to a target stage. Currently the only valid automatic-promotion
+target is `crm_ready`.
+
+**Request body**
+
+```json
+{ "target": "crm_ready" }
+```
+
+**Response `200`** — promotion succeeds, returns the updated `LeadRecord`.
+
+**Response `409`** — rules not met, returns a `ReadinessReport` under `data` plus
+an error envelope:
+
+```json
+{
+  "error": { "code": "not_ready", "message": "lead does not meet crm_ready requirements" },
+  "data": { /* readiness report */ }
+}
+```
+
+### `POST /api/leads/{id}/demote`
+
+Manual demotion to an allow-listed earlier stage.
+
+**Request body**
+
+```json
+{ "target": "validated" }
+```
+
+Valid targets: `raw`, `enriched`, `validated`.
+
+**Response `200`** — returns the updated `LeadRecord`.
+
+### `GET /api/leads/{id}/export`
+
+CRM export stub. Returns `format: "crm_stub_v1"` JSON without calling any
+external CRM.
+
+**Response `200`** — when `stage == "crm_ready"`:
+
+```json
+{
+  "data": {
+    "format": "crm_stub_v1",
+    "exported_at": "2026-07-19T14:00:00Z",
+    "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+    "permission_ref": "perm-2026-001",
+    "lead": { /* safe subset */ },
+    "enrichment": { /* namespaced module summaries */ },
+    "readiness": { /* readiness report */ }
+  }
+}
+```
+
+**Response `409`** — when the lead is not `crm_ready`, returns a readiness
+report with failed checks.
 
 ### `GET /api/modules`
 
@@ -736,6 +866,10 @@ export async function fetchAudit(params?: AuditSearchParams): Promise<ApiRespons
 export async function fetchRuns(): Promise<ApiResponse<PipelineRun[]>>;
 export async function fetchComplianceSummary(): Promise<ApiResponse<ComplianceSummary>>;
 export async function runPipeline(body: PipelineRunRequest): Promise<ApiResponse<{ accepted: true; run_id: string }>>;
+export async function fetchLeadReadiness(id: string): Promise<ApiResponse<ReadinessReport>>;
+export async function promoteLead(id: string, body: { target: PipelineStage }): Promise<ApiResponse<LeadRecord>>;
+export async function demoteLead(id: string, body: { target: PipelineStage }): Promise<ApiResponse<LeadRecord>>;
+export async function exportLead(id: string): Promise<ApiResponse<ExportResponse>>;
 ```
 
 ### No local mock fallback
@@ -752,6 +886,10 @@ export function useModule(name: string): UseQueryResult<ApiResponse<ModuleDetail
 export function useAudit(params?: AuditSearchParams): UseQueryResult<ApiResponse<AuditEvent[]>, Error>;
 export function useRuns(): UseQueryResult<ApiResponse<PipelineRun[]>, Error>;
 export function useComplianceSummary(): UseQueryResult<ApiResponse<ComplianceSummary>, Error>;
+export function useLeadReadiness(id: string): UseQueryResult<ApiResponse<ReadinessReport>, Error>;
+export function usePromoteLead(): UseMutationResult<ApiResponse<LeadRecord>, Error, { id: string; target: PipelineStage }>;
+export function useDemoteLead(): UseMutationResult<ApiResponse<LeadRecord>, Error, { id: string; target: PipelineStage }>;
+export function useExportLead(): UseMutationResult<ApiResponse<ExportResponse>, Error, string>;
 ```
 
 ### Type safety

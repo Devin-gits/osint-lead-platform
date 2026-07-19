@@ -382,7 +382,7 @@ export default function LeadsPage() {
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary" className="capitalize">
-                        {lead.stage.replace("_", " ")}
+                        {lead.stage.replace(/_/g, " ")}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -444,7 +444,7 @@ export default function LeadsPage() {
                     <span className="text-foreground-muted">Stage</span>
                     <div>
                       <Badge variant="secondary" className="capitalize">
-                        {lead.stage.replace("_", " ")}
+                        {lead.stage.replace(/_/g, " ")}
                       </Badge>
                     </div>
                   </div>

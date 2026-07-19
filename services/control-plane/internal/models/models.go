@@ -183,6 +183,11 @@ type ModuleDetail struct {
 	Docs string `json:"docs,omitempty"`
 }
 
+// StageTransitionRequest is the body of POST /api/leads/{id}/promote and demote.
+type StageTransitionRequest struct {
+	Target string `json:"target"`
+}
+
 // LeadSearchParams carries the accepted query parameters for GET /api/leads.
 type LeadSearchParams struct {
 	Stage        string

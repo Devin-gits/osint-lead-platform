@@ -8,12 +8,14 @@ export const API_BASE =
 export class ApiClientError extends Error {
   code: string;
   status: number;
+  data?: unknown;
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, data?: unknown) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -37,7 +39,7 @@ async function parseResponse<T>(res: Response): Promise<ApiResponse<T>> {
 
   if (!res.ok || body.error) {
     const err = body.error || { code: "unknown", message: res.statusText };
-    throw new ApiClientError(err.code, err.message, res.status);
+    throw new ApiClientError(err.code, err.message, res.status, body.data);
   }
 
   return body;
