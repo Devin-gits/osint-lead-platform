@@ -11,6 +11,13 @@ export interface AuditLog {
   checked_at: string;
   status: "ok" | "unknown" | "skipped";
   legal_basis: string;
+  subject?: {
+    email?: string;
+    domain?: string;
+    phone_redacted?: string;
+    handle?: string;
+    url?: string;
+  };
   raw_stderr_json?: string;
 }
 
@@ -46,6 +53,9 @@ export function AuditLogPanel({ events, className }: AuditLogPanelProps) {
                   <span className="font-medium text-foreground">{event.module}</span>
                   {event.tool && <span className="text-foreground-muted"> ({event.tool})</span>}
                   {" — "}{event.status}{" — "}{event.legal_basis}
+                  {event.subject?.url && (
+                    <span className="text-foreground-muted"> — {event.subject.url}</span>
+                  )}
                 </span>
                 <span className="flex items-center gap-2">
                   {event.checked_at && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, Phone, Globe, Users } from "lucide-react";
+import { Mail, Phone, Globe, Users, FileSearch } from "lucide-react";
 import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/utils/cn";
 import type { LeadSummary, LeadRecord, ModuleStatus } from "@/lib/api/types";
@@ -12,6 +12,7 @@ const READINESS_KEYS = [
   { key: "phone_validate", label: "Phone", icon: Phone },
   { key: "domain_intel", label: "Domain", icon: Globe },
   { key: "social_footprint", label: "Social", icon: Users },
+  { key: "extraction", label: "Extract", icon: FileSearch },
 ] as const;
 
 function getStatus(

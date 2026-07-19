@@ -23,6 +23,8 @@ function durationHint(name: ModuleName): string {
       return "May take longer";
     case "social-footprint":
       return "Rate-limited / potentially slow; no ETA";
+    case "extraction":
+      return "Fetches public page; bounded by timeout";
     default:
       return "";
   }
@@ -64,6 +66,7 @@ interface FormState {
   email: string;
   phone: string;
   domain: string;
+  url: string;
   company: string;
 }
 
@@ -77,6 +80,7 @@ function hasContact(values: FormState): boolean {
     values.email.trim(),
     values.phone.trim(),
     values.domain.trim(),
+    values.url.trim(),
     values.company.trim(),
   ].some(Boolean);
 }
@@ -104,6 +108,7 @@ export function CreateLeadFlow() {
     email: "",
     phone: "",
     domain: "",
+    url: "",
     company: "",
   });
   const [errors, setErrors] = useState<FormErrors>({});
@@ -279,6 +284,14 @@ export function CreateLeadFlow() {
                 label="Domain"
                 value={form.domain}
                 onChange={(e) => updateForm("domain", e.target.value)}
+                disabled={create.isPending}
+              />
+              <Input
+                label="URL"
+                type="url"
+                placeholder="https://example.com"
+                value={form.url}
+                onChange={(e) => updateForm("url", e.target.value)}
                 disabled={create.isPending}
               />
               <Input

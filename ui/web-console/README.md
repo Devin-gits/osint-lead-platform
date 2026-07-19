@@ -19,8 +19,12 @@ Requires Node.js 20+ and `npm`.
 The UI talks to the real control-plane API. Run both in separate terminals:
 
 ```bash
-# Terminal 1 — Go control plane
+# Terminal 1 — Go control plane (with extraction wrapper discoverable)
 cd services/control-plane
+# Optional: set wrapper path explicitly if auto-locate does not find it
+# export EXTRACTION_CRAWL4AI_WRAPPER=../../modules/extraction/wrapper/crawl4ai_extract.py
+# Optional: install Crawl4AI in the active Python env for live ok results
+# pip install -r ../../modules/extraction/requirements.txt
 go run ./cmd/server
 ```
 
@@ -62,9 +66,13 @@ npm run lint       # next lint
 - Lead detail shows module result tabs, per-module run actions, and an expandable audit panel.
   The Domain tab renders DNS, SSL/TLS, HTTP, WHOIS and theHarvester cards.
   The Social tab renders per-handle status and claimed/available platform chips.
+  The Extraction tab renders extracted fields, provenance, and collapsible raw markdown (UI-truncated).
 - The leads list bulk-actions bar dynamically offers every `available` module returned by `/api/modules`.
 - `/runs/[id]` shows a single pipeline run and links back to its leads.
 - `social-footprint` requires the Maigret Python wrapper on the API host; long Maigret/theHarvester
   runs may need `MODULE_TIMEOUT` and the control-plane HTTP write timeout raised — see
   `services/control-plane/README.md`.
+- `extraction` requires a public `url` and `permission_ref` on the lead. It uses Crawl4AI by default
+  (Python wrapper in `modules/extraction/wrapper/crawl4ai_extract.py`) or optional Firecrawl when
+  configured. Missing Crawl4AI yields a structured `error`/`skipped` result in the UI, not a fake success.
 - Design tokens are defined in `lib/theme/tokens.ts` and mirrored as CSS custom properties in `app/globals.css`; no one-off colors in pages.

@@ -129,6 +129,42 @@ export interface SocialFootprintResult extends LeadResultMeta {
   summary?: string;
 }
 
+export interface ExtractionResult extends LeadResultMeta {
+  status: ModuleStatus;
+  url?: string;
+  final_url?: string;
+  source_tool?: string;
+  confidence?: number;
+  fields?: {
+    company_name?: string;
+    emails?: string[];
+    phones?: string[];
+    addresses?: string[];
+    social_links?: string[];
+    contact_urls?: string[];
+    description?: string;
+    title?: string;
+  };
+  raw_markdown?: string;
+  provenance?: {
+    field: string;
+    value: string;
+    source_url: string;
+    method: string;
+    timestamp: string;
+  }[];
+  metadata?: {
+    backend?: string;
+    legal_basis?: string;
+    permission_ref?: string;
+    http_status?: number;
+    truncated?: boolean;
+    raw_bytes?: number;
+    duration_ms?: number;
+    limits_applied?: string;
+  };
+}
+
 export interface RawLead {
   id: string;
   name?: string;
@@ -136,6 +172,7 @@ export interface RawLead {
   phone?: string;
   company?: string;
   domain?: string;
+  url?: string;
   source_id?: string;
   permission_ref?: string;
   created_at: string;
@@ -150,6 +187,7 @@ export interface LeadRecord extends RawLead {
   domain_intel?: DomainIntelResult;
   phone_validate?: PhoneValidateResult;
   social_footprint?: SocialFootprintResult;
+  extraction?: ExtractionResult;
   audit_events: AuditEvent[];
 }
 
@@ -169,6 +207,7 @@ export interface AuditEvent {
     domain?: string;
     phone_redacted?: string;
     handle?: string;
+    url?: string;
   };
   raw_stderr_json?: string;
 }
