@@ -1,0 +1,51 @@
+name: modules CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'modules/**'
+      - '.github/workflows/modules.yml'
+  pull_request:
+    paths:
+      - 'modules/**'
+      - '.github/workflows/modules.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - company-enrich
+          - domain-intel
+          - email-validate
+          - extraction
+          - phone-validate
+          - social-footprint
+    defaults:
+      run:
+        working-directory: modules/${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'modules/${{ matrix.module }}/go.mod'
+          cache-dependency-path: '**/go.sum'
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (short)
+        run: go test -short ./...
+
+      - name: Test (full)
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...

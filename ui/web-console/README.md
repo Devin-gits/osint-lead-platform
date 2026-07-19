@@ -37,6 +37,30 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). The root route (`/`) redirects to `/command-center`. The API is expected at `http://localhost:8080` by default; set `NEXT_PUBLIC_API_BASE_URL` to override.
 
+### Manual smoke test
+
+With the control-plane running on `http://localhost:8080`:
+
+```bash
+# 1. Verify all modules are available
+curl -s http://localhost:8080/api/modules | jq '.data[] | {name, dev_status}'
+
+# 2. Create a lead with domain, company, and permission_ref
+LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"example.com","company":"Example","permission_ref":"UI-SMOKE-1"}' | jq -r '.data.id')
+
+# 3. Run company-enrich
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich | {status, fields: .fields | {domain, name, website}}'
+
+# 4. Open the lead in the UI, click the Company tab, and confirm status is "ok"
+```
+
+A domain-only lead returns `partial` with an empty company name; this is the
+honest, expected behaviour. `partial` does not advance the lead to `enriched`.
+
 ## Sidebar breakpoints
 
 | Viewport | Behavior |
@@ -67,6 +91,7 @@ npm run lint       # next lint
   The Domain tab renders DNS, SSL/TLS, HTTP, WHOIS and theHarvester cards.
   The Social tab renders per-handle status and claimed/available platform chips.
   The Extraction tab renders extracted fields, provenance, and collapsible raw markdown (UI-truncated).
+  The Company tab renders firmographics from `company-enrich` (identity, description, size/maturity, headquarters, industry/tech stack, social links, sources) and collapsible raw JSON.
 - The leads list bulk-actions bar dynamically offers every `available` module returned by `/api/modules`.
 - `/runs/[id]` shows a single pipeline run and links back to its leads.
 - `social-footprint` requires the Maigret Python wrapper on the API host; long Maigret/theHarvester

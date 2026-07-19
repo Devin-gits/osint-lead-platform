@@ -21,7 +21,7 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 
 - `/` redirects to `/leads`.
 - `/leads` — list, filters (stage, risk, module_status, q), stage funnel, multi-select bulk actions for every `available` module, live pagination.
-- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction), expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
+- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
 - `/modules` — grouped by `available` / `in_development` / `planned`.
 - `/modules/[name]` — module docs from the registry.
 - `/runs` and `/runs/[id]` — pipeline run timeline and detail.
@@ -30,9 +30,9 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 
 ### CI
 
-- `.github/workflows/ui.yml` — `typecheck`, `lint`, `build` for `ui/web-console`.
-- `.github/workflows/control-plane.yml` — `go vet ./...`, `go test ./...`, `go test -short ./...`, `go build ./...` for `services/control-plane`.
-- `.github/workflows/extraction-ci.yml` — `go test ./...`, `go build ./...` for `modules/extraction`.
+- `.github/workflows/ui.yml` — `npm ci`, `typecheck`, `lint`, `build` for `ui/web-console`.
+- `.github/workflows/control-plane.yml` — `go mod download`, `go vet ./...`, `go test ./...`, `go test -short ./...`, `go build ./...` for `services/control-plane`.
+- `.github/workflows/modules.yml` — matrix job that runs `go vet ./...`, `go test -short ./...`, `go test ./...`, and `go build ./...` for every module with a `go.mod` (`company-enrich`, `domain-intel`, `email-validate`, `extraction`, `phone-validate`, `social-footprint`).
 
 ---
 
@@ -51,15 +51,24 @@ make demo-ui
 
 Then open [http://localhost:3000](http://localhost:3000). The UI expects the API at `http://localhost:8080`; override with `NEXT_PUBLIC_API_BASE_URL`.
 
-### One-shot extraction smoke test
+### Automated tests (no API server needed)
+
+```bash
+make test-go   # all module tests + control-plane tests
+make test-ui   # UI typecheck, lint, and production build
+```
+
+### One-shot operator smoke
 
 With the API running:
 
 ```bash
-make smoke
+make smoke-api   # company-enrich ok/partial/missing-perm_ref paths
+make smoke       # extraction smoke (requires API)
+make smoke-ok    # extraction smoke, requires ok/partial
 ```
 
-This runs `scripts/smoke-extraction.sh`, which creates a lead, runs `extraction`, and prints the result and audit event. It exits 0 for `ok`, `partial`, `skipped`, or a structured `error` (e.g., Crawl4AI not installed). Use `make smoke-ok` to require `ok`/`partial`.
+`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. It uses only deterministic local providers, so no paid API keys are required.
 
 ### Full extraction `ok` path
 
@@ -187,6 +196,6 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 
 - `crm_ready` stage policy and CRM export trigger.
 - Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
-- `company-enrich`: fully available (module, control-plane, UI Company tab).
+- `company-enrich`: fully available (module, control-plane, UI Company tab, CI, smoke runbook).
 - Async worker for long-running Maigret/theHarvester batch jobs.
 - Retention/deletion enforcement in the backend.
