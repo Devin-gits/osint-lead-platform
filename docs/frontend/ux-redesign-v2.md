@@ -1136,7 +1136,7 @@ The following items are explicitly excluded from the v2 UI redesign and are docu
 - **Async job streaming / SSE.** Proposed separately in PR5; UI must work without it.
 - **New control-plane API endpoints.** The redesign consumes existing v1 endpoints only.
 - **Risk-level interpretation.** The UI renders `risk_level` returned by the current control-plane API. v2 must not imply that a composite or policy-derived risk score exists. `unknown` is a valid outcome and must be shown honestly.
-- **`extraction` and `company-enrich` modules.** These are `planned` in the registry; UI shows them in the Planned group.
+- **`company-enrich` module.** `company-enrich` is `planned` in the registry; UI shows it in the Planned group. `extraction` is now `available`.
 - **Bulk breach/leak signals, LinkedIn scraping, reverse-image discovery.** Excluded per `docs/compliance.md`; UI must not add UI for them.
 - **Email/phone validation logic changes.** No changes to `modules/**` or `services/**`.
 - **Dependency additions.** No new npm packages; use existing Tailwind + React + TanStack Query stack.

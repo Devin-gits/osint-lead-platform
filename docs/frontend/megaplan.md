@@ -490,7 +490,7 @@ Error envelope:
 
 - **crm_ready stage policy:** the stage machine advances to `validated` but has no explicit `crm_ready` transition yet.
 - **Risk scoring from domain/social signals:** `risk_score` is not computed beyond the existing `low | medium | high | unknown` labels.
-- **extraction / company-enrich wiring:** both modules are `planned` in the registry and not executable.
+- **company-enrich wiring:** `company-enrich` is `planned` in the registry and not executable. `extraction` is now `available`.
 - **Async long-run jobs:** long Maigret/theHarvester runs currently run inside the synchronous HTTP request. If HTTP write timeouts become a bottleneck, batch runs may move to an async worker.
 
 ### One-module-at-a-time rule for future modules

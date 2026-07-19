@@ -49,10 +49,10 @@ modules/extraction/
 ### Control-plane integration state
 
 - `models.go`: `ModuleExtraction = "extraction"` defined.
-- `registry.go`: extraction registered with `DevStatus: "planned"`, description "Parse and normalise raw lead payloads into the canonical schema", `MinInputField: "raw_payload"`.
-- `runner.go`: extraction falls through to the default stub case, returning `status: "skipped"`, reason "not wired in control-plane v1". The `computeStage` function maps extraction (with status "ok") to `StageEnriched`.
+- `registry.go`: extraction is now registered with `DevStatus: "available"`, description reflecting URL-based page extraction, and `MinInputField: "url"`.
+- `runner.go`: extraction is wired via an in-process `extraction.Extractor` and produces real `ok`/`partial`/`skipped`/`error` results; `computeStage` maps extraction (with status "ok") to `StageEnriched`.
 
-**Gap**: The registry entry describes extraction as "parse raw payloads" with `MinInputField: "raw_payload"` — but the actual module takes a `url` field and fetches a web page. The registry needs to be updated to match reality when the module is wired in.
+**Status update**: The registry has been updated to match the actual module contract (`url` input, page extraction). The gap above is closed.
 
 ### Existing module conventions (from email-validate, domain-intel)
 

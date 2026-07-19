@@ -36,8 +36,8 @@ leads, audit events, and pipeline runs.
 | `EXTRACTION_BACKEND` | `crawl4ai` | Extraction backend: `crawl4ai` or `firecrawl` |
 | `EXTRACTION_TIMEOUT` | `45s` | Per-extraction timeout (Go duration) |
 | `EXTRACTION_MIN_INTERVAL` | `2s` | Minimum spacing between consecutive extraction calls on a reused `Extractor` |
-| `EXTRACTION_CRAWL4AI_PYTHON` | `python3` (on PATH) | Python interpreter for the Crawl4AI wrapper |
-| `EXTRACTION_CRAWL4AI_WRAPPER` | auto-locate | Path to `modules/extraction/wrapper/crawl4ai_extract.py` |
+| `EXTRACTION_CRAWL4AI_PYTHON` | `python3` (on PATH) | Python interpreter for the Crawl4AI wrapper. Use a venv Python (e.g., `modules/extraction/.venv/bin/python`) for the real `ok` extraction path. |
+| `EXTRACTION_CRAWL4AI_WRAPPER` | auto-locate | Path to `modules/extraction/wrapper/crawl4ai_extract.py`. |
 | `FIRECRAWL_API_KEY` | — | Bearer token for optional Firecrawl backend |
 | `FIRECRAWL_BASE_URL` | `https://api.firecrawl.dev/v1` | Firecrawl API base URL |
 | `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
