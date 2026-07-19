@@ -21,7 +21,7 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 
 - `/` redirects to `/leads`.
 - `/leads` — list, filters (stage, risk, module_status, q), stage funnel, multi-select bulk actions for every `available` module, live pagination.
-- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
+- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), readiness card with promote/demote/export actions, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
 - `/modules` — grouped by `available` / `in_development` / `planned`.
 - `/modules/[name]` — module docs from the registry.
 - `/runs` and `/runs/[id]` — pipeline run timeline and detail.
@@ -185,7 +185,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 
 - **Social top-level status** can be `"ok"` even when every individual handle is `"unknown"` because the runner only degrades the lead if the module itself errors; the UI panel renders per-handle status chips.
 - **Multi-handle duration** can exceed the default HTTP write timeout; operators must raise `HTTP_WRITE_TIMEOUT`.
-- **crm_ready stage** is not set by the current stage machine; leads stop at `validated`.
+- **crm_ready stage** requires explicit promotion via `/api/leads/{id}/promote` once readiness rules pass; the stage machine still stops at `validated` from module runs.
 - **Risk is computed from email + phone only** via `runner.computeRisk()`; `domain_intel` and `social_footprint` do not affect `risk_level` today. `risk_score` is stored if present but is not a composite algorithm field.
 - **Compliance summary** is static governance content (hard rules, risk table, checklist, exclusions). It does not yet return numeric stats or per-run scores.
 - **Async long runs** are not supported; batch runs execute synchronously inside the HTTP request.
@@ -194,7 +194,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 
 ## Backlog for v2 and beyond
 
-- `crm_ready` stage policy and CRM export trigger.
+- `crm_ready` auto-demotion when a re-run invalidates a previously promoted lead.
 - Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
 - `company-enrich`: fully available (module, control-plane, UI Company tab, CI, smoke runbook).
 - Async worker for long-running Maigret/theHarvester batch jobs.

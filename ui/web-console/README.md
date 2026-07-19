@@ -56,10 +56,18 @@ curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
   -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich | {status, fields: .fields | {domain, name, website}}'
 
 # 4. Open the lead in the UI, click the Company tab, and confirm status is "ok"
+
+# 5. Promote to CRM-ready and export
+# Run Email validate and Company enrich, then use the CRM readiness card:
+#   - Promote to CRM-ready
+#   - Export stub (downloads a JSON file)
+#   - Demote back to validated
 ```
 
 A domain-only lead returns `partial` with an empty company name; this is the
 honest, expected behaviour. `partial` does not advance the lead to `enriched`.
+Promotion to `crm_ready` is explicit and only succeeds when all readiness checks
+pass.
 
 ## Sidebar breakpoints
 
@@ -87,7 +95,8 @@ npm run lint       # next lint
 - API client, types, and TanStack Query hooks live in `lib/api/**`.
 - `APIHealthIndicator` uses `GET /api/leads?page_size=1` to test whether the control-plane API is reachable. It does **not** claim database, runner, or module health.
 - Leads list supports filters, stage funnel, permission-ref warnings, multi-select bulk runs, and live pagination.
-- Lead detail shows module result tabs, per-module run actions, and an expandable audit panel.
+- Lead detail shows module result tabs, per-module run actions, an expandable audit panel,
+  and a CRM readiness card with promote/demote/export actions.
   The Domain tab renders DNS, SSL/TLS, HTTP, WHOIS and theHarvester cards.
   The Social tab renders per-handle status and claimed/available platform chips.
   The Extraction tab renders extracted fields, provenance, and collapsible raw markdown (UI-truncated).

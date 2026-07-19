@@ -180,3 +180,151 @@ func TestServer_PipelineRun(t *testing.T) {
 var _ = context.Background
 var _ = util.NewID
 var _ = models.StageRaw
+
+func TestServer_CRMReadyFlow(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	// Create lead ready for promotion.
+	body := []byte(`{"email":"support@example.com","company":"Example","domain":"example.com","permission_ref":"p-001"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	lead := createResp.Data.(map[string]any)
+	id := lead["id"].(string)
+
+	// Without validation, promotion should fail with 409.
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/promote", bytes.NewReader([]byte(`{"target":"crm_ready"}`)))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 before validation, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Run email-validate.
+	body = []byte(`{"modules":["email-validate"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/run", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Run company-enrich.
+	body = []byte(`{"modules":["company-enrich"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/run", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Readiness should now pass.
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/readiness", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var readyResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &readyResp); err != nil {
+		t.Fatalf("decode readiness: %v", err)
+	}
+	report, ok := readyResp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected readiness report")
+	}
+	if report["ready"] != true {
+		t.Fatalf("expected ready true, got %v", report["ready"])
+	}
+
+	// Promote should succeed.
+	body = []byte(`{"target":"crm_ready"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/promote", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var promoteResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &promoteResp); err != nil {
+		t.Fatalf("decode promote: %v", err)
+	}
+	promoted := promoteResp.Data.(map[string]any)
+	if promoted["stage"] != "crm_ready" {
+		t.Fatalf("expected stage crm_ready, got %v", promoted["stage"])
+	}
+
+	// Export should now succeed.
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/export", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var exportResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &exportResp); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	export := exportResp.Data.(map[string]any)
+	if export["format"] != "crm_stub_v1" {
+		t.Fatalf("expected format crm_stub_v1, got %v", export["format"])
+	}
+
+	// Demote to validated.
+	body = []byte(`{"target":"validated"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/demote", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var demoteResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &demoteResp); err != nil {
+		t.Fatalf("decode demote: %v", err)
+	}
+	demoted := demoteResp.Data.(map[string]any)
+	if demoted["stage"] != "validated" {
+		t.Fatalf("expected stage validated, got %v", demoted["stage"])
+	}
+
+	// Export now 409.
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/export", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 after demote, got %d", rr.Code)
+	}
+}
+
+func TestServer_ExportNotReady(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	body := []byte(`{"email":"support@example.com","company":"Example","permission_ref":"p-001"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	id := createResp.Data.(map[string]any)["id"].(string)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/export", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

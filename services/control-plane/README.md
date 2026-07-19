@@ -202,6 +202,21 @@ curl -s -X POST "http://localhost:8080/api/leads/$HANDLELESS/run" \
 
 # 10. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
+
+# 11. Promote a fully validated lead to crm_ready (assumes email, domain, and company context)
+# This requires the lead to have email_validate.status == ok and company context from
+# company_enrich ok/partial, extraction ok, or domain_intel ok.
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/promote" \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"crm_ready"}' | jq '.data | {stage, risk_level}'
+
+# 12. Export the crm_ready lead as a JSON stub (no external CRM call)
+curl -s "http://localhost:8080/api/leads/$LEAD/export" | jq '.data | {format, exported_at, permission_ref, readiness}'
+
+# 13. Demote back to validated if needed
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/demote" \
+  -H 'Content-Type: application/json' \
+  -d '{"target":"validated"}' | jq '.data | {stage}'
 ```
 
 With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is

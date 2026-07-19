@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink } from "lucide-react";
+import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink, Download, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
-import { useLead, useRunLeadModules, useModules } from "@/lib/api/hooks";
+import { useLead, useRunLeadModules, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead } from "@/lib/api/hooks";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -21,6 +21,8 @@ import {
   DomainIntelResult,
   ExtractionResult,
   ModuleName,
+  ReadinessCheck,
+  ReadinessReport,
   SocialFootprintResult,
 } from "@/lib/api/types";
 
@@ -58,10 +60,70 @@ function moduleRunState(
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: lead, isLoading, error, refetch } = useLead(id);
+  const { data: readiness, isLoading: readinessLoading } = useLeadReadiness(id);
   const { data: modules } = useModules();
   const run = useRunLeadModules();
+  const promote = usePromoteLead();
+  const demote = useDemoteLead();
+  const exportLead = useExportLead();
   const { addToast } = useToast();
   const [running, setRunning] = useState<ModuleName | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
+
+  const handlePromote = async () => {
+    setTransitioning(true);
+    try {
+      await promote.mutateAsync({ id, body: { target: "crm_ready" } });
+      addToast("Lead promoted to CRM-ready", "success");
+      refetch();
+    } catch (err) {
+      if (err && typeof err === "object" && "status" in err && err.status === 409) {
+        const report = (err as { data?: ReadinessReport }).data;
+        const failed = report?.checks.filter((c) => !c.pass).map((c) => c.name).join(", ") || "unknown";
+        addToast(`Not ready: ${failed}`, "warning");
+      } else {
+        addToast(err instanceof Error ? err.message : "Failed to promote lead", "danger");
+      }
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const handleDemote = async () => {
+    if (lead?.stage !== "crm_ready") return;
+    setTransitioning(true);
+    try {
+      await demote.mutateAsync({ id, body: { target: "validated" } });
+      addToast("Lead demoted to validated", "success");
+      refetch();
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : "Failed to demote lead", "danger");
+    } finally {
+      setTransitioning(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const data = await exportLead.mutateAsync(id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `lead-${id}-export.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast("CRM export stub downloaded", "success");
+    } catch (err) {
+      if (err && typeof err === "object" && "status" in err && err.status === 409) {
+        const report = (err as { data?: ReadinessReport }).data;
+        const failed = report?.checks.filter((c) => !c.pass).map((c) => c.name).join(", ") || "unknown";
+        addToast(`Export blocked: ${failed}`, "warning");
+      } else {
+        addToast(err instanceof Error ? err.message : "Failed to export lead", "danger");
+      }
+    }
+  };
 
   const handleRun = async (module: ModuleName) => {
     setRunning(module);
@@ -132,7 +194,7 @@ export default function LeadDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Stage" value={<Badge className="capitalize">{lead.stage.replace("_", " ")}</Badge>} />
+            <Field label="Stage" value={<Badge className="capitalize">{lead.stage.replace(/_/g, " ")}</Badge>} />
             <Field label="Risk level" value={<RiskBadge level={lead.risk_level} />} />
             {lead.risk_score !== undefined && <Field label="Risk score" value={lead.risk_score} />}
             <Field label="Email" value={lead.email || "—"} />
@@ -205,6 +267,16 @@ export default function LeadDetailPage() {
           )}
         </Card>
       </div>
+
+      <CRMReadinessSection
+        stage={lead.stage}
+        readiness={readiness}
+        loading={readinessLoading}
+        transitioning={transitioning}
+        onPromote={handlePromote}
+        onDemote={handleDemote}
+        onExport={handleExport}
+      />
 
       <Card>
         <Tabs
@@ -821,6 +893,122 @@ function RawJsonView({ data }: { data: unknown }) {
           {JSON.stringify(data, null, 2)}
         </pre>
       )}
+    </div>
+  );
+}
+
+function CRMReadinessSection({
+  stage,
+  readiness,
+  loading,
+  transitioning,
+  onPromote,
+  onDemote,
+  onExport,
+}: {
+  stage: string;
+  readiness?: ReadinessReport;
+  loading: boolean;
+  transitioning: boolean;
+  onPromote: () => void;
+  onDemote: () => void;
+  onExport: () => void;
+}) {
+  const isCrmReady = stage === "crm_ready";
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">CRM readiness</h3>
+          <p className="text-xs text-foreground-secondary">
+            {isCrmReady
+              ? "This lead is CRM-ready and can be exported."
+              : readiness
+                ? readiness.ready
+                  ? "All required checks pass. Promote to CRM-ready to export."
+                  : "Some required checks have not passed yet."
+                : "Checking readiness..."}
+          </p>
+          {readiness?.warning && (
+            <div className="mt-2 flex items-start gap-2 text-xs text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{readiness.warning}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+          {isCrmReady ? (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={onDemote}
+                disabled={transitioning}
+              >
+                <TrendingDown className="mr-1.5 h-3.5 w-3.5" />
+                Demote
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={onExport}
+                disabled={transitioning}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Export stub
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={onPromote}
+              disabled={loading || transitioning || !readiness?.ready}
+              title={readiness?.ready ? "Promote to CRM-ready" : "Lead does not meet CRM-ready requirements"}
+            >
+              <TrendingUp className="mr-1.5 h-3.5 w-3.5" />
+              Promote to CRM-ready
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="mt-4 space-y-2">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      )}
+
+      {readiness && (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {readiness.checks.map((check) => (
+            <ReadinessCheckRow key={check.name} check={check} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ReadinessCheckRow({ check }: { check: ReadinessCheck }) {
+  return (
+    <div className={cn(
+      "flex items-start gap-2 rounded-md border p-2 text-xs",
+      check.pass
+        ? "border-success/20 bg-success/10 text-success"
+        : check.required
+          ? "border-danger/20 bg-danger/10 text-danger"
+          : "border-warning/20 bg-warning/10 text-warning"
+    )}>
+      <span className="mt-0.5 shrink-0">
+        {check.pass ? "✓" : check.required ? "✗" : "!"}
+      </span>
+      <div>
+        <span className="font-medium capitalize">{check.name.replace(/_/g, " ")}</span>
+        <p className="text-foreground-secondary">{check.message}</p>
+      </div>
     </div>
   );
 }

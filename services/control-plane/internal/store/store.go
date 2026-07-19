@@ -94,7 +94,7 @@ func matchFreeText(l models.Lead, q string) bool {
 // matchModuleStatus reports whether any of the namespaced module result
 // blocks has a status equal to want. A missing key is treated as "not_run".
 func matchModuleStatus(l models.Lead, want string) bool {
-	keys := []string{"email_validate", "phone_validate", "domain_intel", "social_footprint", "extraction"}
+	keys := []string{"email_validate", "phone_validate", "domain_intel", "social_footprint", "extraction", "company_enrich"}
 	for _, key := range keys {
 		status := moduleResultStatus(l.Results, key)
 		if strings.EqualFold(status, want) {

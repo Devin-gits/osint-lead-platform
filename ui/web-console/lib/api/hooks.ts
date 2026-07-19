@@ -17,6 +17,9 @@ import {
   ModuleInfo,
   PipelineRun,
   PipelineRunRequest,
+  ReadinessReport,
+  ExportResponse,
+  StageTransitionRequest,
   RunModulesRequest,
 } from "./types";
 
@@ -166,6 +169,57 @@ export function useRunPipeline() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [RUNS_KEY] });
       queryClient.invalidateQueries({ queryKey: [LEADS_KEY] });
+    },
+  });
+}
+
+export function useLeadReadiness(id?: string) {
+  return useQuery<ReadinessReport, ApiClientError>({
+    queryKey: ["readiness", id],
+    queryFn: async () => {
+      if (!id) throw new ApiClientError("missing_id", "No lead id provided", 400);
+      const res = await apiGet<ReadinessReport>(`/api/leads/${id}/readiness`);
+      return res.data;
+    },
+    enabled: !!id,
+  });
+}
+
+export function usePromoteLead() {
+  const queryClient = useQueryClient();
+  return useMutation<LeadRecord, ApiClientError, { id: string; body: StageTransitionRequest }>({
+    mutationFn: async ({ id, body }) => {
+      const res = await apiPost<LeadRecord>(`/api/leads/${id}/promote`, body);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [LEAD_KEY, variables.id] });
+      queryClient.invalidateQueries({ queryKey: [LEADS_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["readiness", variables.id] });
+    },
+  });
+}
+
+export function useDemoteLead() {
+  const queryClient = useQueryClient();
+  return useMutation<LeadRecord, ApiClientError, { id: string; body: StageTransitionRequest }>({
+    mutationFn: async ({ id, body }) => {
+      const res = await apiPost<LeadRecord>(`/api/leads/${id}/demote`, body);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: [LEAD_KEY, variables.id] });
+      queryClient.invalidateQueries({ queryKey: [LEADS_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["readiness", variables.id] });
+    },
+  });
+}
+
+export function useExportLead() {
+  return useMutation<ExportResponse, ApiClientError, string>({
+    mutationFn: async (id) => {
+      const res = await apiGet<ExportResponse>(`/api/leads/${id}/export`);
+      return res.data;
     },
   });
 }

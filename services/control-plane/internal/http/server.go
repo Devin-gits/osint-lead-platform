@@ -28,6 +28,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/leads", s.handleListLeads)
 	mux.HandleFunc("GET /api/leads/{id}", s.handleGetLead)
 	mux.HandleFunc("POST /api/leads/{id}/run", s.handleRunModules)
+	mux.HandleFunc("GET /api/leads/{id}/readiness", s.handleReadiness)
+	mux.HandleFunc("POST /api/leads/{id}/promote", s.handlePromote)
+	mux.HandleFunc("POST /api/leads/{id}/demote", s.handleDemote)
+	mux.HandleFunc("GET /api/leads/{id}/export", s.handleExport)
 
 	mux.HandleFunc("GET /api/modules", s.handleListModules)
 	mux.HandleFunc("GET /api/modules/{name}", s.handleGetModule)

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/readiness"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
@@ -290,6 +292,207 @@ func (s *Server) handlePipelineRun(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+func (s *Server) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing lead id")
+		return
+	}
+
+	lead, err := s.store.GetLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	report := readiness.Compute(lead)
+	writeJSON(w, http.StatusOK, response{Data: report})
+}
+
+func (s *Server) handlePromote(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing lead id")
+		return
+	}
+
+	var req models.StageTransitionRequest
+	if err := parseJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if req.Target == "" {
+		req.Target = models.StageCrmReady
+	}
+
+	lead, err := s.store.GetLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	report := readiness.Compute(lead)
+	summary := map[string]any{
+		"action":        "promote",
+		"target":        req.Target,
+		"ready":         report.Ready,
+		"checks":        report.Checks,
+		"previousStage": lead.Stage,
+	}
+
+	if !report.Ready {
+		s.logCrmEvent(lead, "pipeline", "crm_promote", "error", summary)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{
+				"code":    "not_ready",
+				"message": "lead does not meet crm_ready requirements",
+			},
+			"data": report,
+		})
+		return
+	}
+
+	lead.Stage = models.StageCrmReady
+	lead.UpdatedAt = currentTime()
+	if _, err := s.store.UpdateLead(r.Context(), lead); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	summary["stage"] = lead.Stage
+	s.logCrmEvent(lead, "pipeline", "crm_promote", "ok", summary)
+
+	events, err := s.store.ListAuditEventsByLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	lead.AuditEvents = events
+
+	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+}
+
+func (s *Server) handleDemote(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing lead id")
+		return
+	}
+
+	var req models.StageTransitionRequest
+	if err := parseJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+
+	lead, err := s.store.GetLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	if !readiness.CanDemoteTo(lead.Stage, req.Target) {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("cannot demote from %s to %s", lead.Stage, req.Target))
+		return
+	}
+
+	summary := map[string]any{
+		"action":        "demote",
+		"target":        req.Target,
+		"previousStage": lead.Stage,
+	}
+
+	lead.Stage = req.Target
+	lead.UpdatedAt = currentTime()
+	if _, err := s.store.UpdateLead(r.Context(), lead); err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	summary["stage"] = lead.Stage
+	s.logCrmEvent(lead, "pipeline", "crm_demote", "ok", summary)
+
+	events, err := s.store.ListAuditEventsByLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+	lead.AuditEvents = events
+
+	writeJSON(w, http.StatusOK, response{Data: leadToJSON(lead, true)})
+}
+
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing lead id")
+		return
+	}
+
+	lead, err := s.store.GetLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	report := readiness.Compute(lead)
+	summary := map[string]any{
+		"action": "export",
+		"ready":  report.Ready,
+		"stage":  lead.Stage,
+		"checks": report.Checks,
+	}
+
+	if lead.Stage != models.StageCrmReady {
+		s.logCrmEvent(lead, "pipeline", "crm_export", "error", summary)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{
+				"code":    "not_ready",
+				"message": "lead must be crm_ready before export",
+			},
+			"data": report,
+		})
+		return
+	}
+
+	legalBasis := lead.PermissionRef
+	if legalBasis == "" {
+		legalBasis = models.LegalBasisGDPR
+	} else {
+		legalBasis = fmt.Sprintf("%s (permission_ref: %s)", models.LegalBasisGDPR, lead.PermissionRef)
+	}
+
+	summary["exportedAt"] = currentTime().Format(time.RFC3339)
+	s.logCrmEvent(lead, "pipeline", "crm_export", "ok", summary)
+
+	resp := map[string]any{
+		"format":      "crm_stub_v1",
+		"exported_at": currentTime().Format(time.RFC3339),
+		"legal_basis": legalBasis,
+		"permission_ref": lead.PermissionRef,
+		"lead": map[string]any{
+			"id":         lead.ID,
+			"name":       lead.Name,
+			"email":      lead.Email,
+			"phone":      lead.Phone,
+			"company":    lead.Company,
+			"domain":     lead.Domain,
+			"url":        lead.URL,
+			"source_id":  lead.SourceID,
+			"stage":      lead.Stage,
+			"risk_level": lead.RiskLevel,
+		},
+		"enrichment": lead.Results,
+		"readiness":  report,
+	}
+
+	writeJSON(w, http.StatusOK, response{Data: resp})
+}
+
 // helpers.
 
 func parseInt(s string, def int) int {
@@ -337,3 +540,32 @@ func leadToJSON(lead models.Lead, withAudit bool) map[string]any {
 
 // currentTime is used by tests that want deterministic timestamps.
 var currentTime = func() time.Time { return time.Now().UTC() }
+
+// logCrmEvent creates a sanitized pipeline audit event for promote/demote/export.
+func (s *Server) logCrmEvent(lead models.Lead, module, tool, status string, summary map[string]any) {
+	subject := models.Subject{}
+	if lead.Domain != "" {
+		subject.Domain = lead.Domain
+	} else if lead.Email != "" {
+		// Only keep a stable, redacted handle-like identifier for the audit log.
+		subject.Email = lead.Email
+	}
+
+	raw, _ := json.Marshal(summary)
+	event := models.AuditEvent{
+		ID:            util.NewID(),
+		LeadID:        lead.ID,
+		Module:        module,
+		Tool:          tool,
+		CheckedAt:     currentTime(),
+		Status:        status,
+		LegalBasis:    models.LegalBasisGDPR,
+		Subject:       subject,
+		RawStderrJSON: string(raw),
+		CreatedAt:     currentTime(),
+	}
+	if lead.PermissionRef != "" {
+		event.LegalBasis = fmt.Sprintf("%s (permission_ref: %s)", models.LegalBasisGDPR, lead.PermissionRef)
+	}
+	_, _ = s.store.CreateAuditEvent(context.Background(), event)
+}

@@ -295,6 +295,53 @@ export interface PipelineRun {
   error?: string;
 }
 
+export interface ReadinessCheck {
+  name: string;
+  pass: boolean;
+  message: string;
+  required: boolean;
+}
+
+export interface ReadinessReport {
+  ready: boolean;
+  stage: PipelineStage;
+  suggested_stage: PipelineStage;
+  warning?: string;
+  checks: ReadinessCheck[];
+}
+
+export interface ExportResponse {
+  format: "crm_stub_v1";
+  exported_at: string;
+  legal_basis: string;
+  permission_ref?: string;
+  lead: {
+    id: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+    domain?: string;
+    url?: string;
+    source_id?: string;
+    stage: PipelineStage;
+    risk_level: RiskLevel;
+  };
+  enrichment: {
+    email_validate?: EmailValidateResult;
+    phone_validate?: PhoneValidateResult;
+    domain_intel?: DomainIntelResult;
+    social_footprint?: SocialFootprintResult;
+    extraction?: ExtractionResult;
+    company_enrich?: CompanyEnrichResult;
+  };
+  readiness: ReadinessReport;
+}
+
+export interface StageTransitionRequest {
+  target: PipelineStage;
+}
+
 export interface ComplianceRule {
   id: number;
   title: string;

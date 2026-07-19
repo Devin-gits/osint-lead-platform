@@ -86,6 +86,31 @@ Expected output:
 ==> smoke-api passed
 ```
 
+### CRM-ready smoke
+
+```bash
+make smoke-crm
+# or
+./scripts/smoke-crm-ready.sh
+```
+
+Expected output:
+
+```text
+==> Smoke target: http://localhost:8080
+==> lead <id>
+==> promoting before validation (expect 409)
+==> checking readiness before validation
+==> running email-validate and company-enrich
+==> checking readiness after validation
+==> promoting to crm_ready
+==> lead stage is crm_ready
+==> exporting lead
+{ "format": "crm_stub_v1", ... }
+==> demoting lead to validated
+==> smoke-crm-ready passed
+```
+
 ## 5. Manual UI checks
 
 1. Open `http://localhost:3000/modules` — `company-enrich` should show
@@ -107,7 +132,15 @@ Expected output:
 7. Create a third lead without `permission_ref` and with `domain` only.
    - The **Run company enrich** button should be disabled with the tooltip
      `needs permission ref`.
-8. The `EnvironmentBanner` at the top should say `Live API` when the
+8. Promote a validated lead:
+   - Create a lead with `email`, `company`, `domain`, and `permission_ref`.
+   - Run **Email validate** and **Company enrich**.
+   - The **CRM readiness** card should show all checks passing.
+   - Click **Promote to CRM-ready** → stage chip updates to `crm ready`.
+   - Click **Export stub** → a JSON file downloads with `format: crm_stub_v1`.
+   - Click **Demote** → stage returns to `validated` and **Export stub** becomes
+     unavailable.
+9. The `EnvironmentBanner` at the top should say `Live API` when the
    control-plane is reachable; it should never say `mock data`.
 
 ## Expected behaviour notes
