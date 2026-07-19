@@ -171,7 +171,20 @@ curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
   -H 'Content-Type: application/json' \
   -d '{"modules":["extraction"]}' | jq '.data.extraction'
 
-# 6. Extraction on a lead without permission_ref stays skipped
+# 6. Company enrichment on a lead with domain + company + permission_ref
+curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich'
+
+# 7. Company enrichment on a domain-only lead returns partial with an empty name
+COMPANYONLY=$(curl -s -X POST http://localhost:8080/api/leads \
+  -H 'Content-Type: application/json' \
+  -d '{"domain":"example.com","permission_ref":"p-002"}' | jq -r '.data.id')
+curl -s -X POST "http://localhost:8080/api/leads/$COMPANYONLY/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich | {status, fields: .fields | {domain, name, website}}'
+
+# 8. Extraction on a lead without permission_ref stays skipped
 NOPERM=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com"}' | jq -r '.data.id')
@@ -179,7 +192,7 @@ curl -s -X POST "http://localhost:8080/api/leads/$NOPERM/run" \
   -H 'Content-Type: application/json' \
   -d '{"modules":["extraction"]}' | jq '.data | {stage, extraction}'
 
-# 7. Social-footprint on a lead with no usable handle stays skipped without crashing
+# 9. Social-footprint on a lead with no usable handle stays skipped without crashing
 HANDLELESS=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"company":"NoHandle"}' | jq -r '.data.id')
@@ -187,7 +200,7 @@ curl -s -X POST "http://localhost:8080/api/leads/$HANDLELESS/run" \
   -H 'Content-Type: application/json' \
   -d '{"modules":["social-footprint"]}' | jq '.data | {stage, social_footprint}'
 
-# 8. Get the lead with audit events (raw_stderr_json and legal_basis)
+# 10. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
 ```
 
@@ -197,15 +210,16 @@ With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
 ### Response shape notes
 
 - Lead records expose module results as top-level keys (`email_validate`,
-  `phone_validate`, `domain_intel`, `social_footprint`, `extraction`). The internal `results`
+  `phone_validate`, `domain_intel`, `social_footprint`, `extraction`, `company_enrich`). The internal `results`
   map is not part of the public JSON.
 - `url` is accepted at creation time and is the required input for `extraction`;
   `extraction` requires `permission_ref` (from the lead or run request).
 - `risk_level` is one of `low`, `medium`, `high`, or `unknown`.
 - Stage advances only when an executed module reports `status: "ok"`. Skipped or
   unknown modules do not move the lead forward (e.g., running `domain-intel` on a
-  lead with no domain stays `raw`). `extraction` advancing to `enriched` when it
-  reports `ok`.
+  lead with no domain stays `raw`). `extraction` and `company-enrich` advance to
+  `enriched` when they report `ok`; `company-enrich` `partial` (e.g. domain-only)
+  stays `raw` by design.
 - Audit events use `raw_stderr_json` and include `legal_basis` and
   sanitized `subject.url` on every line.
 
