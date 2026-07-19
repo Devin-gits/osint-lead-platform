@@ -79,6 +79,7 @@ export interface RawLead {
   phone?: string;
   company?: string;
   domain?: string;
+  url?: string;
   source_id?: string;
   permission_ref?: string;
   created_at: string;
@@ -191,6 +192,44 @@ export interface SocialFootprintResult {
   source_tool?: string;
 }
 
+export interface ExtractionResult {
+  status: ModuleStatus;
+  url?: string;
+  final_url?: string;
+  source_tool?: string;
+  confidence?: number;
+  fields?: {
+    company_name?: string;
+    emails?: string[];
+    phones?: string[];
+    addresses?: string[];
+    social_links?: string[];
+    contact_urls?: string[];
+    description?: string;
+    title?: string;
+  };
+  raw_markdown?: string;
+  provenance?: {
+    field: string;
+    value: string;
+    source_url: string;
+    method: string;
+    timestamp: string;
+  }[];
+  metadata?: {
+    backend?: string;
+    legal_basis?: string;
+    permission_ref?: string;
+    http_status?: number;
+    truncated?: boolean;
+    raw_bytes?: number;
+    duration_ms?: number;
+    limits_applied?: string;
+  };
+  error?: string;
+  checked_at?: string;
+}
+
 export interface LeadRecord extends RawLead {
   stage: PipelineStage;
   risk_level: RiskLevel;
@@ -199,6 +238,7 @@ export interface LeadRecord extends RawLead {
   domain_intel?: DomainIntelResult;
   phone_validate?: PhoneValidateResult;
   social_footprint?: SocialFootprintResult;
+  extraction?: ExtractionResult;
   audit_events: AuditEvent[];
 }
 
@@ -224,6 +264,7 @@ export interface AuditEvent {
     domain?: string;
     phone_redacted?: string;
     handle?: string;
+    url?: string;
   };
   raw_stderr_json?: string;
 }
@@ -282,7 +323,7 @@ export interface PipelineRun {
 
 ### Module result types as namespaced keys
 
-`LeadRecord` exposes each module result as a top-level namespaced key (`email_validate`, `phone_validate`, `domain_intel`, `social_footprint`). The backend returns these flattened onto the lead object; the internal `results` map is not part of the public JSON. Each module writes only under its own namespace and never overwrites raw ingested fields.
+`LeadRecord` exposes each module result as a top-level namespaced key (`email_validate`, `phone_validate`, `domain_intel`, `social_footprint`, `extraction`). The backend returns these flattened onto the lead object; the internal `results` map is not part of the public JSON. Each module writes only under its own namespace and never overwrites raw ingested fields.
 
 `DomainIntelResult` and `SocialFootprintResult` include the real nested sub-structures emitted by `modules/domain-intel` and `modules/social-footprint` (DNS/SSL/HTTP/WHOIS, theHarvester, handle results, platform signals, etc.). The UI renders the structured fields and keeps a collapsible raw JSON view for power users.
 
@@ -344,8 +385,8 @@ List leads with optional filters and pagination.
 |------|------|-------------|
 | `stage` | `PipelineStage` | Filter by pipeline stage |
 | `risk` | `RiskLevel` | Filter by risk level |
-| `module_status` | `ModuleStatus` | Lead matches if any of `email_validate.status`, `phone_validate.status`, `domain_intel.status`, or `social_footprint.status` equals the value; a missing key is treated as `not_run` for filtering only |
-| `q` | string | Free-text search over `name`, `email`, `company`, `domain` |
+| `module_status` | `ModuleStatus` | Lead matches if any of `email_validate.status`, `phone_validate.status`, `domain_intel.status`, `social_footprint.status`, or `extraction.status` equals the value; a missing key is treated as `not_run` for filtering only |
+| `q` | string | Free-text search over `name`, `email`, `company`, `domain`, `url` |
 | `page` | number | Default `1` |
 | `page_size` | number | Default `25`, max `100` |
 

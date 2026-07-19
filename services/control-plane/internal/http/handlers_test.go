@@ -112,6 +112,26 @@ func TestServer_ListModules(t *testing.T) {
 	if !ok || len(mods) == 0 {
 		t.Fatalf("expected modules list")
 	}
+
+	found := false
+	for _, m := range mods {
+		mod, ok := m.(map[string]any)
+		if !ok {
+			continue
+		}
+		if mod["name"] == "extraction" {
+			found = true
+			if mod["dev_status"] != "available" {
+				t.Fatalf("expected extraction dev_status available, got %v", mod["dev_status"])
+			}
+			if mod["min_input_field"] != "url" {
+				t.Fatalf("expected extraction min_input_field url, got %v", mod["min_input_field"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("extraction module not found in list: %+v", mods)
+	}
 }
 
 func TestServer_CORS(t *testing.T) {

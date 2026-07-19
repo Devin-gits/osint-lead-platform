@@ -12,6 +12,7 @@ import (
 
 	domainintel "github.com/Moyeil-73/osint-lead-platform/modules/domain-intel"
 	emailvalidate "github.com/Moyeil-73/osint-lead-platform/modules/email-validate"
+	extraction "github.com/Moyeil-73/osint-lead-platform/modules/extraction"
 	phonevalidate "github.com/Moyeil-73/osint-lead-platform/modules/phone-validate"
 	socialfootprint "github.com/Moyeil-73/osint-lead-platform/modules/social-footprint"
 
@@ -20,6 +21,12 @@ import (
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
 
+// extractionRunner matches *extraction.Extractor for dependency injection and
+// tests.
+type extractionRunner interface {
+	Extract(ctx context.Context, in extraction.Input) (extraction.Result, extraction.AuditRecord)
+}
+
 // Runner executes modules and persists their output.
 type Runner struct {
 	store     store.Store
@@ -27,6 +34,7 @@ type Runner struct {
 	phoneVal  *phonevalidate.Validator
 	domainVal *domainintel.Analyzer
 	socialVal *socialfootprint.Validator
+	extractor extractionRunner
 }
 
 // New builds a Runner backed by the supplied Store.
@@ -50,6 +58,7 @@ func New(s store.Store, timeout time.Duration) *Runner {
 		phoneVal:  phonevalidate.NewValidator(timeout),
 		domainVal: domainintel.NewAnalyzer(domainTimeout),
 		socialVal: socialfootprint.NewValidator(0, 0),
+		extractor: extraction.NewExtractor(timeout, 0, ""),
 	}
 }
 
@@ -209,7 +218,7 @@ func (r *Runner) runModulesOnLead(ctx context.Context, lead models.Lead, modules
 		}
 		executed = append(executed, name)
 
-		res, err := r.runModule(ctx, lead, name, runID, legalBasis)
+		res, err := r.runModule(ctx, lead, name, runID, legalBasis, permissionRef)
 		if err != nil {
 			return lead, auditEvents, err
 		}
@@ -232,12 +241,10 @@ func (r *Runner) runModulesOnLead(ctx context.Context, lead models.Lead, modules
 	lead.Stage = computeStage(lead.Stage, executed, moduleStatuses)
 	lead.RiskLevel = computeRisk(lead.Results)
 	_ = moduleStatuses
-	_ = permissionRef
-	_ = ctx
 	return lead, auditEvents, nil
 }
 
-func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, legalBasis string) (models.ModuleResult, error) {
+func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, legalBasis, permissionRef string) (models.ModuleResult, error) {
 	checkedAt := time.Now().UTC()
 
 	switch name {
@@ -381,8 +388,11 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		}
 		return models.ModuleResult{Key: "domain_intel", Result: m, AuditEvents: events}, nil
 
+	case models.ModuleExtraction:
+		return r.runExtraction(ctx, lead, runID, legalBasis, permissionRef)
+
 	default:
-		// extraction, company-enrich and any unknown module: stub.
+		// company-enrich and any unknown module: stub.
 		raw, _ := json.Marshal(map[string]string{"reason": "not wired in control-plane v1"})
 		event := models.AuditEvent{
 			ID:            util.NewID(),
@@ -401,6 +411,71 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 			"reason": "not wired in control-plane v1",
 		}, AuditEvents: []models.AuditEvent{event}}, nil
 	}
+}
+
+func (r *Runner) runExtraction(ctx context.Context, lead models.Lead, runID, legalBasis, permissionRef string) (models.ModuleResult, error) {
+	checkedAt := time.Now().UTC()
+
+	if permissionRef == "" {
+		res := map[string]any{"status": "skipped", "reason": "missing permission_ref"}
+		raw, _ := json.Marshal(map[string]string{"reason": "missing permission_ref"})
+		event := models.AuditEvent{
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        models.ModuleExtraction,
+			Tool:          "control-plane",
+			CheckedAt:     checkedAt,
+			Status:        "skipped",
+			LegalBasis:    legalBasis,
+			Subject:       models.Subject{URL: lead.URL},
+			RawStderrJSON: string(raw),
+		}
+		return models.ModuleResult{Key: "extraction", Result: res, AuditEvents: []models.AuditEvent{event}}, nil
+	}
+
+	res, audit := r.extractor.Extract(ctx, extraction.Input{
+		URL:           lead.URL,
+		PermissionRef: permissionRef,
+		Email:         lead.Email,
+		Name:          lead.Name,
+		Company:       lead.Company,
+		Domain:        lead.Domain,
+	})
+
+	// Use the module's audit JSON verbatim; it already contains tool_version,
+	// permission_ref, sanitized URLs, legal_basis, limits, and duration.
+	rawAudit, _ := json.Marshal(audit)
+
+	checkedTime, _ := time.Parse(time.RFC3339, audit.Timestamp)
+	if checkedTime.IsZero() {
+		checkedTime = checkedAt
+	}
+
+	subjectURL := audit.RequestURL
+	if subjectURL == "" {
+		subjectURL = lead.URL
+	}
+
+	event := models.AuditEvent{
+		ID:            util.NewID(),
+		LeadID:        lead.ID,
+		RunID:         &runID,
+		Module:        models.ModuleExtraction,
+		Tool:          audit.Tool,
+		CheckedAt:     checkedTime,
+		Status:        audit.Status,
+		LegalBasis:    audit.LegalBasis,
+		Subject:       models.Subject{URL: subjectURL},
+		RawStderrJSON: string(rawAudit),
+	}
+
+	m, err := resultToMap(res)
+	if err != nil {
+		return models.ModuleResult{}, fmt.Errorf("convert extraction result: %w", err)
+	}
+
+	return models.ModuleResult{Key: "extraction", Result: m, AuditEvents: []models.AuditEvent{event}}, nil
 }
 
 func (r *Runner) finaliseRun(ctx context.Context, run models.PipelineRun, events []models.AuditEvent, runErr error) {

@@ -2,10 +2,13 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
+	extraction "github.com/Moyeil-73/osint-lead-platform/modules/extraction"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
@@ -312,5 +315,198 @@ func TestRunner_RunSingleSocialFootprintUsesDomainIntel(t *testing.T) {
 	handles, _ := ev["handles_checked"].([]any)
 	if len(handles) < 2 {
 		t.Fatalf("expected at least 2 handle candidates from email + domain-intel harvester, got %d", len(handles))
+	}
+}
+
+type fakeExtractionExtractor struct {
+	result extraction.Result
+	audit  extraction.AuditRecord
+}
+
+func (f *fakeExtractionExtractor) Extract(ctx context.Context, in extraction.Input) (extraction.Result, extraction.AuditRecord) {
+	return f.result, f.audit
+}
+
+func TestRunner_Extraction_MissingPermissionRef(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+	r.extractor = &fakeExtractionExtractor{}
+
+	lead := models.Lead{ID: util.NewID(), URL: "https://example.com"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"extraction"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["extraction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extraction result, got %T", updated.Results["extraction"])
+	}
+	if ev["status"] != "skipped" {
+		t.Fatalf("expected skipped status, got %v", ev["status"])
+	}
+	if !strings.Contains(ev["reason"].(string), "permission_ref") {
+		t.Fatalf("expected missing permission_ref reason, got %v", ev["reason"])
+	}
+	if updated.Stage != models.StageRaw {
+		t.Fatalf("expected stage raw on skip, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "extraction" && e.Status == "skipped" && e.LegalBasis == models.LegalBasisGDPR {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected extraction skipped audit event with legal basis, got %+v", events)
+	}
+}
+
+func TestRunner_Extraction_RejectedURL(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+	// Use the real extraction Extractor so SSRF policy is enforced.
+
+	lead := models.Lead{ID: util.NewID(), URL: "http://127.0.0.1/", PermissionRef: "T-1"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"extraction"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["extraction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extraction result, got %T", updated.Results["extraction"])
+	}
+	if ev["status"] != "skipped" {
+		t.Fatalf("expected skipped status, got %v", ev["status"])
+	}
+	if !strings.Contains(ev["error"].(string), "SSRF") && !strings.Contains(ev["error"].(string), "forbidden") && !strings.Contains(ev["error"].(string), "IP-literal") {
+		t.Fatalf("expected SSRF rejection error, got %v", ev["error"])
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "extraction" && e.Status == "skipped" && e.Subject.URL == "http://127.0.0.1/" && e.LegalBasis == models.LegalBasisGDPR {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected extraction SSRF audit event with URL subject and legal basis, got %+v", events)
+	}
+}
+
+func TestRunner_Extraction_Success(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+	r.extractor = &fakeExtractionExtractor{
+		result: extraction.Result{
+			Status:    "ok",
+			URL:       "https://example.com",
+			FinalURL:  "https://example.com/",
+			SourceTool: "test",
+			Confidence: 0.5,
+			Fields: extraction.Fields{
+				CompanyName: "Example Inc",
+				Emails:      []string{"hello@example.com"},
+			},
+			Metadata: extraction.Metadata{
+				Backend:    "crawl4ai",
+				LegalBasis: models.LegalBasisGDPR,
+				HTTPStatus: 200,
+			},
+		},
+		audit: extraction.AuditRecord{
+			Module:       "extraction",
+			Tool:         "unclecode/crawl4ai@v0.9.2 (CLI subprocess)",
+			ToolVersion:  "crawl4ai==0.9.2",
+			Status:       "ok",
+			LegalBasis:   models.LegalBasisGDPR,
+			PermissionRef: "T-1",
+			RequestURL:   "https://example.com",
+			FinalURL:     "https://example.com/",
+		},
+	}
+
+	lead := models.Lead{ID: util.NewID(), URL: "https://example.com", PermissionRef: "T-1"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"extraction"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["extraction"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected extraction result, got %T", updated.Results["extraction"])
+	}
+	if ev["status"] != "ok" {
+		t.Fatalf("expected ok status, got %v", ev["status"])
+	}
+	if updated.Stage != models.StageEnriched {
+		t.Fatalf("expected stage enriched when extraction ok, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Module != "extraction" {
+		t.Fatalf("expected module extraction, got %s", e.Module)
+	}
+	if e.LegalBasis != models.LegalBasisGDPR {
+		t.Fatalf("expected legal basis %s, got %s", models.LegalBasisGDPR, e.LegalBasis)
+	}
+	if e.Subject.URL != "https://example.com" {
+		t.Fatalf("expected subject URL https://example.com, got %s", e.Subject.URL)
+	}
+
+	// Audit raw JSON must not leak raw page content (markdown/HTML).
+	if strings.Contains(e.RawStderrJSON, "raw_markdown") || strings.Contains(e.RawStderrJSON, "<html") {
+		t.Fatalf("audit raw_stderr_json leaked raw content: %s", e.RawStderrJSON)
+	}
+
+	var audit extraction.AuditRecord
+	if err := json.Unmarshal([]byte(e.RawStderrJSON), &audit); err != nil {
+		t.Fatalf("decode raw audit: %v", err)
+	}
+	if audit.PermissionRef != "T-1" {
+		t.Fatalf("expected audit permission_ref T-1, got %s", audit.PermissionRef)
+	}
+	if audit.ToolVersion == "" {
+		t.Fatalf("expected audit tool_version")
 	}
 }
