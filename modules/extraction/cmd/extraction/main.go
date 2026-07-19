@@ -6,8 +6,10 @@
 //
 // Usage:
 //
-//	echo '{"url":"https://example.com"}' | extraction
+//	echo '{"url":"https://example.com","permission_ref":"CAMP-2026-Q3-001"}' | extraction
 //	extraction --url https://example.com --timeout 30s --backend firecrawl
+//
+// permission_ref must be provided in the stdin JSON; there is no CLI flag for it.
 //
 // Exit code is 0 whenever a well-formed lead was read and a record emitted —
 // including extraction failures, which are reported in-band as
@@ -77,11 +79,13 @@ func run(stdin io.Reader, stdout, stderr io.Writer) error {
 	extractor := extraction.NewExtractor(timeoutFromEnv(), minIntervalFromEnv(), backend)
 
 	input := extraction.Input{
-		URL:     urlFromLead,
-		Email:   stringField(lead, "email"),
-		Name:    stringField(lead, "name"),
-		Company: stringField(lead, "company"),
-		Domain:  stringField(lead, "domain"),
+		URL:           urlFromLead,
+		PermissionRef: stringField(lead, "permission_ref"),
+		SourceID:      stringField(lead, "source_id"),
+		Email:         stringField(lead, "email"),
+		Name:          stringField(lead, "name"),
+		Company:       stringField(lead, "company"),
+		Domain:        stringField(lead, "domain"),
 	}
 
 	result, audit := extractor.Extract(context.Background(), input)
