@@ -106,6 +106,19 @@ func TestCompute_BandsAndUnknown(t *testing.T) {
 			level: models.RiskLow,
 		},
 		{
+			name: "email_validate unknown counts as error",
+			lead: models.Lead{
+				Email: "bad@example.com",
+				Results: map[string]any{
+					"email_validate": map[string]any{
+						"status": "unknown",
+					},
+				},
+			},
+			want:  ptrf(40),
+			level: models.RiskMedium,
+		},
+		{
 			name: "phone invalid but parseable",
 			lead: models.Lead{
 				Phone: "+1 555 444 1212",
@@ -133,6 +146,21 @@ func TestCompute_BandsAndUnknown(t *testing.T) {
 			},
 			want:  ptrf(40), // flag points only counted when status is ok/partial
 			level: models.RiskMedium,
+		},
+		{
+			name: "phone format_valid false counts as invalid",
+			lead: models.Lead{
+				Phone: "+1234567890",
+				Results: map[string]any{
+					"phone_validate": map[string]any{
+						"status":          "ok",
+						"format_valid":      false,
+						"is_valid_number":   false,
+					},
+				},
+			},
+			want:  ptrf(15), // invalid +25, minus green contact -10
+			level: models.RiskLow,
 		},
 		{
 			name: "very high from email + phone errors",

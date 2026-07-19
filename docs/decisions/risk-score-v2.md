@@ -45,9 +45,10 @@ flags still 30).
 
 ## No-signals case
 
-If the lead has no `email`, `phone`, `domain`, `company`, or `url` and no
-module results have been written, the score is `0` and the level is
-`unknown`. This is the only case that produces `unknown`.
+If the lead has no `email`, `phone`, `domain`, `url`, or module results, the
+score is `0` and the level is `unknown`. A lead with only `company` and no
+module results is treated as having no signals and is therefore `unknown`.
+This is the only case that produces `unknown`.
 
 ## When recomputed
 
@@ -67,7 +68,7 @@ module results have been written, the score is `0` and the level is
 | email ok but `is_disposable: true` | medium/high depending on remaining flags |
 | email_validate error | high (+40) |
 | phone present, never validated | low/medium (+10 from unvalidated contact) |
-| no email/phone/domain and no module results | unknown (score 0) |
+| company only, no module results | unknown (score 0) |
 
 ## Implementation notes
 
