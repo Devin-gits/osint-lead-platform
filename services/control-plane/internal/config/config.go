@@ -12,6 +12,7 @@ import (
 type Config struct {
 	DatabaseURL       string
 	Port              string
+	ListenHost        string
 	CORSOrigin        string
 	ModuleTimeout     time.Duration
 	ReadHeaderTimeout time.Duration
@@ -24,6 +25,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		Port:              os.Getenv("PORT"),
+		ListenHost:        os.Getenv("LISTEN_HOST"),
 		CORSOrigin:        os.Getenv("CORS_ORIGIN"),
 		ModuleTimeout:     90 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -33,6 +35,9 @@ func Load() (*Config, error) {
 
 	if cfg.Port == "" {
 		cfg.Port = "8080"
+	}
+	if cfg.ListenHost == "" {
+		cfg.ListenHost = "127.0.0.1"
 	}
 	if cfg.CORSOrigin == "" {
 		cfg.CORSOrigin = "http://localhost:3000"

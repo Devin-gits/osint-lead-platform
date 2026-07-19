@@ -13,6 +13,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Port != "8080" {
 		t.Fatalf("expected default port 8080, got %s", cfg.Port)
 	}
+	if cfg.ListenHost != "127.0.0.1" {
+		t.Fatalf("expected default listen host 127.0.0.1, got %s", cfg.ListenHost)
+	}
 	if cfg.CORSOrigin != "http://localhost:3000" {
 		t.Fatalf("expected default CORS origin, got %s", cfg.CORSOrigin)
 	}
@@ -32,6 +35,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadEnv(t *testing.T) {
 	t.Setenv("PORT", "9090")
+	t.Setenv("LISTEN_HOST", "0.0.0.0")
 	t.Setenv("CORS_ORIGIN", "http://example.com")
 	t.Setenv("MODULE_TIMEOUT", "2m")
 	t.Setenv("HTTP_READ_TIMEOUT", "45s")
@@ -43,6 +47,9 @@ func TestLoadEnv(t *testing.T) {
 	}
 	if cfg.Port != "9090" {
 		t.Fatalf("expected port 9090, got %s", cfg.Port)
+	}
+	if cfg.ListenHost != "0.0.0.0" {
+		t.Fatalf("expected listen host 0.0.0.0, got %s", cfg.ListenHost)
 	}
 	if cfg.CORSOrigin != "http://example.com" {
 		t.Fatalf("expected CORS origin http://example.com, got %s", cfg.CORSOrigin)
