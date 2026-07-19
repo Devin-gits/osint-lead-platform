@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -44,12 +45,12 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 	now := time.Now().UTC().Format(time.RFC3339)
 	if f.apiKey == "" {
 		return Result{
-			Status:    "skipped",
-			URL:       url,
+			Status:     "skipped",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
-			Error:     fmt.Sprintf("%s is not set; Firecrawl adapter is optional — see README", firecrawlAPIKeyEnv),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
+			Error:      fmt.Sprintf("%s is not set; Firecrawl adapter is optional — see README", firecrawlAPIKeyEnv),
 		}, nil
 	}
 
@@ -61,24 +62,24 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
-			Error:     fmt.Sprintf("marshal request: %v", err),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
+			Error:      fmt.Sprintf("marshal request: %v", err),
 		}, nil
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", f.baseURL+"/scrape", bytes.NewReader(body))
 	if err != nil {
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
-			Error:     fmt.Sprintf("build request: %v", err),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
+			Error:      fmt.Sprintf("build request: %v", err),
 		}, nil
 	}
 	req.Header.Set("Authorization", "Bearer "+f.apiKey)
@@ -88,16 +89,27 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 	if httpTimeout <= 0 {
 		httpTimeout = DefaultTimeout
 	}
-	client := &http.Client{Timeout: httpTimeout}
+	client := &http.Client{
+		Timeout: httpTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= MaxRedirects {
+				return fmt.Errorf("too many redirects")
+			}
+			if _, err := validateURL(req.URL.String(), net.LookupIP); err != nil {
+				return fmt.Errorf("redirect rejected by SSRF policy: %w", err)
+			}
+			return nil
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
-			Error:     fmt.Sprintf("firecrawl request failed: %v", err),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis},
+			Error:      fmt.Sprintf("firecrawl request failed: %v", err),
 		}, nil
 	}
 	defer resp.Body.Close()
@@ -105,24 +117,24 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
-			Error:     fmt.Sprintf("read firecrawl response: %v", err),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
+			Error:      fmt.Sprintf("read firecrawl response: %v", err),
 		}, nil
 	}
 
 	var parsed firecrawlResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
-			Error:     fmt.Sprintf("parse firecrawl response: %v", err),
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
+			Error:      fmt.Sprintf("parse firecrawl response: %v", err),
 		}, nil
 	}
 
@@ -132,12 +144,12 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 			errMsg = "firecrawl returned failure"
 		}
 		return Result{
-			Status:    "error",
-			URL:       url,
+			Status:     "error",
+			URL:        url,
 			SourceTool: SourceToolFirecrawl,
-			CheckedAt: now,
-			Metadata:  Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
-			Error:     errMsg,
+			CheckedAt:  now,
+			Metadata:   Metadata{Backend: BackendFirecrawl, LegalBasis: LegalBasis, HTTPStatus: resp.StatusCode},
+			Error:      errMsg,
 		}, nil
 	}
 
@@ -187,12 +199,12 @@ func (f *firecrawlRunner) run(ctx context.Context, url string, timeout time.Dura
 type firecrawlResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
-		Markdown string `json:"markdown"`
+		Markdown string   `json:"markdown"`
 		Links    []string `json:"links"`
 		Metadata struct {
-			StatusCode int    `json:"statusCode"`
-			SourceURL  string `json:"sourceURL"`
-			Title      string `json:"title"`
+			StatusCode  int    `json:"statusCode"`
+			SourceURL   string `json:"sourceURL"`
+			Title       string `json:"title"`
 			Description string `json:"description"`
 		} `json:"metadata"`
 	} `json:"data"`
@@ -200,10 +212,10 @@ type firecrawlResponse struct {
 }
 
 var (
-	emailRe    = regexp.MustCompile(`(?i)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
-	phoneRe    = regexp.MustCompile(`(?i)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,9})?`)
-	socialRe   = regexp.MustCompile(`(?i)https?://(?:www\.)?(twitter\.com|x\.com|facebook\.com|linkedin\.com|instagram\.com|youtube\.com|tiktok\.com|github\.com|gitlab\.com)/[^\s\"]+`)
-	contactRe  = regexp.MustCompile(`(?i)(/contact|/about|/support|/help|/careers|/jobs)`)
+	emailRe   = regexp.MustCompile(`(?i)([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`)
+	phoneRe   = regexp.MustCompile(`(?i)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{2,4}[-.\s]?\d{2,4}(?:[-.\s]?\d{2,9})?`)
+	socialRe  = regexp.MustCompile(`(?i)https?://(?:www\.)?(twitter\.com|x\.com|facebook\.com|linkedin\.com|instagram\.com|youtube\.com|tiktok\.com|github\.com|gitlab\.com)/[^\s\"]+`)
+	contactRe = regexp.MustCompile(`(?i)(/contact|/about|/support|/help|/careers|/jobs)`)
 )
 
 func extractFieldsFromText(markdown string, links []string, baseURL string) Fields {

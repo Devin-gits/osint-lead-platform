@@ -3,11 +3,11 @@
 Extract structured, low-risk lead fields from a landing page or business website.
 
 This module is part of the OSINT lead platform Validate stage. It takes a lead
-record containing a `url`, fetches the page using one of two swappable backends,
-and returns a normalized extraction result plus a structured audit line on
-stderr.
+record containing a `url` and a `permission_ref`, fetches the page using one of two
+swappable backends, and returns a normalized extraction result plus a
+structured audit line on stderr.
 
-Per the Stage 1 decision (`docs/decisions/stage-1-decision.md` § extraction):
+Per the Stage 2 decision (`docs/decisions/extraction-stage-2-plan.md`):
 
 - **Primary backend:** [Crawl4AI](https://github.com/unclecode/crawl4ai) — local
   Python crawler, Apache-2.0 + attribution clause. This is the default.
@@ -35,8 +35,11 @@ Firecrawl requires only an API key; no Python dependency.
 
 ```bash
 export EXTRACTION_BACKEND=crawl4ai
-echo '{"url":"https://example.com"}' | ./bin/extraction
+echo '{"url":"https://example.com","permission_ref":"CAMP-2026-Q3-001"}' | ./bin/extraction
 ```
+
+`permission_ref` is **mandatory**. A missing `permission_ref` produces a
+`skipped` result and a clear audit message.
 
 ## I/O contract
 
@@ -48,6 +51,7 @@ A single JSON object on stdin, or `--url` (optionally with `--backend` and
 ```json
 {
   "url": "https://example.com",
+  "permission_ref": "CAMP-2026-Q3-001",
   "email": "support@example.com",
   "name": "Jane Doe",
   "company": "Example Inc",
@@ -55,8 +59,14 @@ A single JSON object on stdin, or `--url` (optionally with `--backend` and
 }
 ```
 
-Only `url` is required. The other fields are preserved in the output for
-context but are never required to crawl.
+| Field | Required | Description |
+|---|---|---|
+| `url` | yes | Exact public HTTP(S) URL to extract from. |
+| `permission_ref` | yes | Privacy-safe reference tying the extraction to an approved customer/data-processing basis. |
+| `email` | no | Passed through for context; never logged to audit. |
+| `name` | no | Passed through for context; never logged to audit. |
+| `company` | no | Passed through for context; never logged to audit. |
+| `domain` | no | Passed through for context; never logged to audit. |
 
 ### Output (stdout)
 
@@ -65,7 +75,7 @@ The same lead record with an `extraction` object added:
 ```json
 {
   "url": "https://example.com",
-  "company": "Example Inc",
+  "permission_ref": "CAMP-2026-Q3-001",
   "extraction": {
     "status": "ok",
     "url": "https://example.com",
@@ -83,15 +93,27 @@ The same lead record with an `extraction` object added:
       "title": "Example Inc - Home"
     },
     "raw_markdown": "...page markdown truncated to 100 KB...",
+    "provenance": [
+      {
+        "field": "company_name",
+        "value": "Example Inc",
+        "source_url": "https://example.com/",
+        "method": "crawl4ai",
+        "timestamp": "2026-07-19T12:00:00Z"
+      }
+    ],
     "metadata": {
       "backend": "crawl4ai",
       "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+      "permission_ref": "CAMP-2026-Q3-001",
       "http_status": 200,
       "truncated": false,
-      "raw_bytes": 1234
+      "raw_bytes": 1234,
+      "duration_ms": 1234,
+      "limits_applied": "max_body=2MB,max_markdown=100KB,timeout=45s,max_redirects=5"
     },
     "error": "",
-    "checked_at": "2026-07-16T12:00:00Z"
+    "checked_at": "2026-07-19T12:00:00Z"
   }
 }
 ```
@@ -100,21 +122,36 @@ Statuses:
 
 - `ok` — extraction succeeded and produced fields.
 - `partial` — the page was fetched but few/no structured fields were found.
-- `skipped` — missing URL or missing Firecrawl API key (operational skip).
+- `skipped` — missing URL, missing `permission_ref`, URL rejected by SSRF policy, or missing Firecrawl API key (operational skip).
 - `error` — crawl/API failure, timeout, missing binary, or unparseable output.
 
 `raw_markdown` is bounded to 100 KB to keep storage and audit logs sane.
+`provenance` records one entry per extracted value, linking it to the source URL,
+extraction method, and timestamp.
 
 ### Audit (stderr)
 
 One JSON line per run:
 
 ```json
-{"tool":"unclecode/crawl4ai@v0.9.2 (CLI subprocess)","url":"https://example.com","checked_at":"2026-07-16T12:00:00Z","status":"ok","legal_basis":"GDPR Art.6(1)(f) legitimate-interest"}
+{
+  "module": "extraction",
+  "tool": "unclecode/crawl4ai@v0.9.2 (CLI subprocess)",
+  "tool_version": "crawl4ai==0.9.2",
+  "timestamp": "2026-07-19T12:00:00Z",
+  "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
+  "permission_ref": "CAMP-2026-Q3-001",
+  "request_url": "https://example.com?utm_source=[redacted]",
+  "final_url": "https://example.com/",
+  "status": "ok",
+  "duration_ms": 1234,
+  "limits": "max_body=2MB,max_markdown=100KB,timeout=45s,max_redirects=5"
+}
 ```
 
-The audit subject is the URL only. Emails, names, companies, API keys, and page
-bodies are never written to stderr.
+The audit subject is the URL only. Query parameter values are redacted to
+`[redacted]`. Userinfo (credentials) is stripped. Emails, names, companies, API
+keys, raw page bodies, and credentials are never written to stderr.
 
 ### Exit codes
 
@@ -130,7 +167,9 @@ bodies are never written to stderr.
 ```
 
 When run from a terminal, `--url` can supply the URL if stdin is not used.
-At least one of `--url` or a `url` field in stdin JSON must be provided.
+At least one of `--url` or a `url` field in stdin JSON must be provided. The
+`permission_ref` must come from stdin JSON; there is no `--permission-ref` flag
+by design (to avoid credentials/policy leakage through shell history).
 
 ## Configuration
 
@@ -157,6 +196,7 @@ phones, social links, and contact URLs.
 - No proxy/Tor flags.
 - Bounded markdown payload.
 - Missing Crawl4AI install → structured `error`, exit 0.
+- The wrapper also validates the target URL for SSRF in defence in depth.
 
 ### Firecrawl (optional adapter)
 
@@ -164,25 +204,64 @@ Set `EXTRACTION_BACKEND=firecrawl` and `FIRECRAWL_API_KEY`. The Go adapter calls
 `POST /v1/scrape` and normalizes the markdown/links into the same `fields`
 shape. If the key is missing, the result is `skipped` with a clear message.
 
+The Firecrawl HTTP client sets `CheckRedirect` to reject any redirect target that
+does not pass the same SSRF policy applied to the input URL.
+
 Firecrawl is an optional Stage 2 spike adapter; the primary and maintained path
 is Crawl4AI.
+
+## Security / SSRF controls
+
+Before any backend is invoked, the Go orchestrator validates the input URL:
+
+- **Scheme:** `http` and `https` only.
+- **Userinfo:** URLs containing `user:pass@...` are rejected. Credentials in URLs
+  leak through logs, shell history, process lists, proxies, and audit trails.
+- **IP-literal hostnames:** rejected by default. Public websites should use DNS
+  names.
+- **DNS resolution:** every resolved IP is checked against the forbidden list.
+- **Forbidden IPs:** loopback, link-local, RFC1918, CGNAT (`100.64.0.0/10`),
+  unique-local IPv6, multicast, unspecified, and cloud metadata
+  (`169.254.169.254`).
+- **Ports:** only 80 and 443 by default.
+- **Redirects:** validated by the Firecrawl adapter `CheckRedirect`.
+
+These controls are defence-in-depth: the Crawl4AI Python wrapper repeats the
+same checks before fetching. Residual risk remains because the subprocess crawler
+may follow server-side redirects; the Go layer cannot intercept every hop inside
+Python. This residual limitation is documented in `docs/decisions/extraction-stage-2-plan.md`.
+
+## LinkedIn link harvesting vs LinkedIn scraping
+
+`modules/extraction` may collect a LinkedIn URL **only when it already appears on
+the permissioned page** (e.g., in a `social_links` array). It does **not** target
+LinkedIn pages, perform LinkedIn search, or scrape LinkedIn profiles. LinkedIn
+profile/page scraping as a target is forbidden per `docs/compliance.md` and is
+out of scope for this module.
 
 ## Guardrails / compliance
 
 - **One URL per call**, no site-wide recursive crawl.
 - **No LLM extraction by default**; no LLM API key required for Crawl4AI.
-- **No PII in audit logs**; subject is URL only.
+- **No PII in audit logs**; subject is URL only, with query values redacted.
 - **Rate-limited** per-process via `EXTRACTION_MIN_INTERVAL`.
-- **Legal basis:** `GDPR Art.6(1)(f) legitimate-interest` on every audit line and
-  in result metadata.
+- **Legal basis:** `GDPR Art.6(1)(f) legitimate-interest` on every audit line,
+  every result, and every provenance record.
+- **`permission_ref` mandatory** for every extraction.
 
 ## License table
 
 | Component | License | Notes |
 |---|---|---|
 | `modules/extraction` Go code | MIT | This repo's module code. |
-| Crawl4AI (local Python) | Apache-2.0 + attribution | Invoked only as a subprocess CLI; no source imported or vendored. See [Crawl4AI license](https://github.com/unclecode/crawl4ai/blob/main/LICENSE). |
-| Firecrawl (hosted API adapter) | AGPL / hosted service | Only a thin HTTP client in Go; no server code vendored. |
+| `wrapper/crawl4ai_extract.py` | MIT | This repo's wrapper script. |
+| Crawl4AI (local Python) | Apache-2.0 + attribution | Invoked only as a subprocess CLI; no source imported or vendored. See `LICENSES.md` and `https://github.com/unclecode/crawl4ai/blob/main/LICENSE`. |
+| Firecrawl (hosted API adapter) | Hosted service / partner terms | Only a thin HTTP client in Go; no server code vendored. |
+| Go standard library | BSD-style (Go license) | Used for URL parsing, HTTP, DNS, JSON, etc. |
+
+Explicitly **not** used in this module: Photon, Crawlab, `linkedin_scraper`,
+`linkedin2username`, LinkedInt, or any LinkedIn scraping library. See
+`LICENSES.md` for the full rejection list.
 
 ## Test
 
@@ -193,6 +272,31 @@ make vet
 make build
 ```
 
-Live Crawl4AI / Firecrawl tests are skipped under `-short` and additionally
-gated by `EXTRACTION_LIVE=1` so CI runs `go test ./...` without needing real
-network credentials.
+Or directly:
+
+```bash
+go test ./...
+go test ./... -short
+go vet ./...
+go build -o bin/extraction ./cmd/extraction
+```
+
+All unit and security tests are network-free. Live Crawl4AI / Firecrawl tests
+are skipped under `-short` and additionally gated by `EXTRACTION_LIVE=1` so CI
+runs `go test ./...` without needing real network credentials.
+
+### Manual security checks
+
+```bash
+echo '{"url":"https://example.com","permission_ref":"T-1"}' | ./bin/extraction
+echo '{"url":"http://127.0.0.1/","permission_ref":"T-1"}' | ./bin/extraction
+echo '{"url":"http://169.254.169.254/","permission_ref":"T-1"}' | ./bin/extraction
+echo '{"url":"https://user:pass@example.com/","permission_ref":"T-1"}' | ./bin/extraction
+```
+
+Expected:
+
+- Missing `permission_ref` → `skipped`.
+- Private / metadata / credentialed URLs → `skipped`.
+- `stderr` audit contains `legal_basis`, `permission_ref`, and `limits` and
+  never contains raw HTML, PII, or credentials.

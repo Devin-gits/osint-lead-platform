@@ -77,11 +77,13 @@ func run(stdin io.Reader, stdout, stderr io.Writer) error {
 	extractor := extraction.NewExtractor(timeoutFromEnv(), minIntervalFromEnv(), backend)
 
 	input := extraction.Input{
-		URL:     urlFromLead,
-		Email:   stringField(lead, "email"),
-		Name:    stringField(lead, "name"),
-		Company: stringField(lead, "company"),
-		Domain:  stringField(lead, "domain"),
+		URL:           urlFromLead,
+		PermissionRef: stringField(lead, "permission_ref"),
+		SourceID:      stringField(lead, "source_id"),
+		Email:         stringField(lead, "email"),
+		Name:          stringField(lead, "name"),
+		Company:       stringField(lead, "company"),
+		Domain:        stringField(lead, "domain"),
 	}
 
 	result, audit := extractor.Extract(context.Background(), input)

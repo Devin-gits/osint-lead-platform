@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,5 +106,34 @@ func TestFirecrawlRunner_APIError(t *testing.T) {
 	}
 	if res.Error == "" {
 		t.Error("expected error message for API failure")
+	}
+}
+
+func TestFirecrawlRunner_RejectRedirectToPrivateIP(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/scrape" {
+			// Simulate a malicious or compromised Firecrawl API redirecting to a
+			// private address. The HTTP client CheckRedirect must reject it.
+			http.Redirect(w, r, "http://127.0.0.1:9999/metadata", http.StatusFound)
+			return
+		}
+		t.Errorf("unexpected request to %q", r.URL.Path)
+	}))
+	defer server.Close()
+
+	t.Setenv(firecrawlAPIKeyEnv, "test-key")
+	t.Setenv(firecrawlBaseURLEnv, server.URL+"/v1")
+	r := newFirecrawlRunner()
+	res, err := r.run(context.Background(), "https://example.com", 30*time.Second)
+	// err may be non-nil because the CheckRedirect policy aborts the redirect.
+	if err != nil && res.Status == "" {
+		res.Status = "error"
+		res.Error = err.Error()
+	}
+	if res.Status != "error" && res.Status != "skipped" {
+		t.Errorf("status = %q, want error or skipped", res.Status)
+	}
+	if res.Error == "" || !strings.Contains(res.Error, "redirect rejected") && !strings.Contains(res.Error, "SSRF") && !strings.Contains(res.Error, "forbidden") {
+		t.Errorf("expected SSRF/redirect error, got %q", res.Error)
 	}
 }

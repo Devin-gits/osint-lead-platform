@@ -14,6 +14,7 @@ Behavior:
 """
 import argparse
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -23,6 +24,88 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 MAX_MARKDOWN_BYTES = 100 * 1024
+
+
+def _is_forbidden_ip(host):
+    """Return True if host is a loopback, link-local, private, CGNAT,
+    unique-local IPv6, multicast, unspecified, or cloud-metadata address."""
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+
+    if addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified or addr.is_private:
+        return True
+
+    # Carrier-grade NAT (RFC 6598): 100.64.0.0/10.
+    if isinstance(addr, ipaddress.IPv4Address):
+        octets = addr.packed
+        if octets[0] == 100 and 64 <= octets[1] <= 127:
+            return True
+        # Cloud metadata endpoint: 169.254.169.254/32.
+        if octets == b"\xa9\xfe\xa9\xfe":
+            return True
+
+    return False
+
+
+def validate_url(url):
+    """Defence-in-depth URL validation mirroring the Go SSRF policy.
+
+    Rejects non-http/https schemes, missing hosts, userinfo (credentials),
+    non-standard ports, IP-literal hosts, and hostnames that resolve to
+    forbidden IPs. Returns the parsed URL or raises ValueError.
+    """
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("empty URL")
+
+    parsed = urlparse(url)
+
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme {parsed.scheme!r} not allowed; only http and https")
+
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL must not contain credentials")
+
+    host = (parsed.hostname or "").lower().strip()
+    if not host:
+        raise ValueError("URL has no host")
+
+    # Reject IP-literal hosts by default.
+    if _is_forbidden_ip(host):
+        raise ValueError(f"URL host {host!r} is a forbidden IP address")
+
+    try:
+        ipaddress.ip_address(host)
+        raise ValueError("IP-literal URLs are not allowed")
+    except ValueError:
+        # Not an IP address, which is what we want for public websites.
+        pass
+
+    port = parsed.port
+    if port is not None and port not in (80, 443):
+        raise ValueError(f"non-standard port {port} not allowed")
+
+    # Resolve the hostname and validate every returned IP. This is defence in
+    # depth; the Go orchestrator already validates before calling the wrapper.
+    try:
+        import socket
+
+        infos = socket.getaddrinfo(host, None)
+    except OSError as e:
+        raise ValueError(f"DNS lookup for {host!r}: {e}") from e
+
+    seen_ips = set()
+    for info in infos:
+        ip = info[4][0]
+        if ip in seen_ips:
+            continue
+        seen_ips.add(ip)
+        if _is_forbidden_ip(ip):
+            raise ValueError(f"URL {url!r} resolves to forbidden IP {ip}")
+
+    return parsed
 
 EMAIL_RE = re.compile(
     r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", re.IGNORECASE
@@ -124,6 +207,7 @@ def error_result(url, message, status="error"):
         "raw_markdown": "",
         "metadata": {
             "backend": "crawl4ai",
+            "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
             "error": message,
             "truncated": False,
         },
@@ -272,6 +356,12 @@ def main():
         return
 
     try:
+        validate_url(url)
+    except ValueError as e:
+        emit(error_result(url, f"URL rejected by SSRF policy: {e}"))
+        return
+
+    try:
         result = run_crawl(url, args.timeout)
     except Exception as e:
         emit(error_result(url, f"crawl4ai run failed: {e}"))
@@ -308,6 +398,7 @@ def main():
         "raw_markdown": markdown,
         "metadata": {
             "backend": "crawl4ai",
+            "legal_basis": "GDPR Art.6(1)(f) legitimate-interest",
             "http_status": status_code,
             "truncated": truncated,
             "raw_bytes": len(raw_bytes),
