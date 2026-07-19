@@ -18,6 +18,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils/cn";
 import {
   DomainIntelResult,
+  ExtractionResult,
   ModuleName,
   SocialFootprintResult,
 } from "@/lib/api/types";
@@ -27,6 +28,7 @@ const moduleOrder: { key: string; label: string; module: ModuleName }[] = [
   { key: "phone_validate", label: "Phone", module: "phone-validate" },
   { key: "domain_intel", label: "Domain", module: "domain-intel" },
   { key: "social_footprint", label: "Social", module: "social-footprint" },
+  { key: "extraction", label: "Extraction", module: "extraction" },
 ];
 
 export default function LeadDetailPage() {
@@ -112,6 +114,7 @@ export default function LeadDetailPage() {
             <Field label="Phone" value={lead.phone || "—"} />
             <Field label="Company" value={lead.company || "—"} />
             <Field label="Domain" value={lead.domain || "—"} />
+            <Field label="URL" value={lead.url || "—"} />
             <Field label="Source ID" value={lead.source_id || "—"} />
             <Field
               label="Permission ref"
@@ -135,27 +138,41 @@ export default function LeadDetailPage() {
           {!lead.permission_ref && (
             <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>No permission reference — module runs may lack legal basis.</span>
+              <span>No permission reference — extraction and other module runs will be skipped.</span>
+            </div>
+          )}
+          {!lead.url && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>No URL — extraction requires a public URL.</span>
             </div>
           )}
           <div className="space-y-2">
             {moduleOrder.map(({ label, module }) => {
               const mod = modules?.find((m) => m.name === module);
               const isWired = mod?.dev_status === "available";
+              const needsUrl = module === "extraction";
+              const disabledReason = !isWired
+                ? "not wired"
+                : needsUrl && !lead.url
+                ? "needs url"
+                : needsUrl && !lead.permission_ref
+                ? "needs permission ref"
+                : null;
               return (
                 <Button
                   key={module}
                   size="sm"
                   variant="secondary"
                   className="w-full justify-between"
-                  disabled={!isWired || running !== null || run.isPending}
+                  disabled={!isWired || running !== null || run.isPending || !!disabledReason}
                   onClick={() => handleRun(module)}
                 >
                   <span className="flex items-center gap-2">
                     <Play className="h-3.5 w-3.5" />
                     {label}
                   </span>
-                  {!isWired && <span className="text-[10px] opacity-70">not wired</span>}
+                  {disabledReason && <span className="text-[10px] opacity-70">{disabledReason}</span>}
                 </Button>
               );
             })}
@@ -271,6 +288,8 @@ function ModuleResultPanel({
         <DomainResultPanel result={result as unknown as DomainIntelResult} />
       ) : module === "social-footprint" ? (
         <SocialResultPanel result={result as unknown as SocialFootprintResult} />
+      ) : module === "extraction" ? (
+        <ExtractionResultPanel result={result as unknown as ExtractionResult} />
       ) : (
         <GenericResultGrid result={result} />
       )}
@@ -461,6 +480,88 @@ function RecordList({ label, items }: { label: string; items: string[] }) {
         ))}
         {items.length > 4 && <li>+{items.length - 4} more</li>}
       </ul>
+    </div>
+  );
+}
+
+function ExtractionResultPanel({ result }: { result: ExtractionResult }) {
+  const fields = result.fields;
+  const provenance = result.provenance ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ResultCard label="Source tool" value={result.source_tool || "—"} />
+        <ResultCard label="Confidence" value={`${Math.round((result.confidence ?? 0) * 100)}%`} />
+        <ResultCard label="HTTP status" value={result.metadata?.http_status ?? "—"} />
+        <ResultCard label="Final URL" value={result.final_url || result.url || "—"} />
+      </div>
+
+      {result.error && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 p-3 text-sm text-danger">
+          {result.error}
+        </div>
+      )}
+
+      {fields && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">Extracted fields</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            {fields.company_name && <ResultCard label="Company name" value={fields.company_name} />}
+            {fields.title && <ResultCard label="Title" value={fields.title} />}
+            {fields.description && (
+              <div className="col-span-full">
+                <span className="text-xs text-foreground-muted">Description</span>
+                <p className="mt-1 text-sm text-foreground">{fields.description}</p>
+              </div>
+            )}
+            {fields.emails && fields.emails.length > 0 && (
+              <RecordList label="Emails" items={fields.emails} />
+            )}
+            {fields.phones && fields.phones.length > 0 && (
+              <RecordList label="Phones" items={fields.phones} />
+            )}
+            {fields.social_links && fields.social_links.length > 0 && (
+              <RecordList label="Social links" items={fields.social_links} />
+            )}
+            {fields.contact_urls && fields.contact_urls.length > 0 && (
+              <RecordList label="Contact URLs" items={fields.contact_urls} />
+            )}
+            {fields.addresses && fields.addresses.length > 0 && (
+              <RecordList label="Addresses" items={fields.addresses} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {provenance.length > 0 && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">Provenance</h4>
+          <ul className="space-y-2">
+            {provenance.slice(0, 20).map((p, idx) => (
+              <li key={idx} className="text-xs text-foreground-secondary">
+                <span className="font-medium text-foreground">{p.field}</span>
+                {": "}
+                {p.value}
+                {" "}
+                <span className="text-foreground-muted">({p.method} @ {p.source_url} — {new Date(p.timestamp).toLocaleString()})</span>
+              </li>
+            ))}
+            {provenance.length > 20 && <li className="text-xs text-foreground-muted">+{provenance.length - 20} more</li>}
+          </ul>
+        </div>
+      )}
+
+      {result.raw_markdown && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">Raw markdown</h4>
+          <pre className="max-h-64 overflow-auto rounded-md bg-surface-elevated p-3 text-xs text-foreground-secondary">
+            {result.raw_markdown.length > 10000 ? result.raw_markdown.slice(0, 10000) + "\n… truncated in UI" : result.raw_markdown}
+          </pre>
+        </div>
+      )}
+
+      <RawJsonView data={result} />
     </div>
   );
 }

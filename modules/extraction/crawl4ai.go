@@ -110,6 +110,9 @@ func locateCrawl4AIWrapper() (string, error) {
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates,
+			// Binaries built inside modules/extraction (e.g., bin/extraction)
+			// live one directory below the module root.
+			filepath.Join(dir, "..", "wrapper", "crawl4ai_extract.py"),
 			filepath.Join(dir, "wrapper", "crawl4ai_extract.py"),
 			filepath.Join(dir, "crawl4ai_extract.py"),
 		)
@@ -119,6 +122,11 @@ func locateCrawl4AIWrapper() (string, error) {
 			filepath.Join(wd, "wrapper", "crawl4ai_extract.py"),
 			filepath.Join(wd, "..", "wrapper", "crawl4ai_extract.py"),
 			filepath.Join(wd, "..", "..", "wrapper", "crawl4ai_extract.py"),
+			// Monorepo layout: module may be reached from services/control-plane,
+			// repository root, or another sibling directory.
+			filepath.Join(wd, "..", "..", "modules", "extraction", "wrapper", "crawl4ai_extract.py"),
+			filepath.Join(wd, "..", "modules", "extraction", "wrapper", "crawl4ai_extract.py"),
+			filepath.Join(wd, "modules", "extraction", "wrapper", "crawl4ai_extract.py"),
 		)
 	}
 	for _, c := range candidates {

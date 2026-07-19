@@ -25,6 +25,7 @@ const moduleOptions = [
   { value: "phone-validate", label: "phone-validate" },
   { value: "domain-intel", label: "domain-intel" },
   { value: "social-footprint", label: "social-footprint" },
+  { value: "extraction", label: "extraction" },
   { value: "pipeline", label: "pipeline" },
 ];
 
@@ -76,6 +77,7 @@ function subjectSummary(event: AuditEvent): string {
   const parts: string[] = [];
   if (event.subject.email) parts.push(event.subject.email);
   if (event.subject.domain) parts.push(event.subject.domain);
+  if (event.subject.url) parts.push(event.subject.url);
   if (event.subject.phone_redacted) parts.push(event.subject.phone_redacted);
   if (event.subject.handle) parts.push(`@${event.subject.handle}`);
   return parts.join(", ") || "—";
@@ -108,7 +110,8 @@ export default function AuditPage() {
         e.module.toLowerCase().includes(q) ||
         e.tool.toLowerCase().includes(q) ||
         (e.subject?.email && e.subject.email.toLowerCase().includes(q)) ||
-        (e.subject?.domain && e.subject.domain.toLowerCase().includes(q))
+        (e.subject?.domain && e.subject.domain.toLowerCase().includes(q)) ||
+        (e.subject?.url && e.subject.url.toLowerCase().includes(q))
     );
   }, [data, query]);
 

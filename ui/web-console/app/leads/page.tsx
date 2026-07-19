@@ -256,7 +256,7 @@ export default function LeadsPage() {
                 <div className="relative">
                   <Input
                     label="Search"
-                    placeholder="Name, email, company, domain"
+                    placeholder="Name, email, company, domain, URL"
                     value={filters.q}
                     onChange={(e) => updateFilter("q", e.target.value)}
                   />
@@ -375,7 +375,7 @@ export default function LeadsPage() {
                         {lead.name || "—"}
                       </div>
                       <div className="text-xs text-foreground-muted">
-                        {lead.email || lead.domain || lead.company || lead.id}
+                        {lead.email || lead.url || lead.domain || lead.company || lead.id}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -423,7 +423,7 @@ export default function LeadsPage() {
                       {lead.name || "—"}
                     </div>
                     <div className="text-xs text-foreground-muted">
-                      {lead.email || lead.domain || lead.company || lead.id}
+                      {lead.email || lead.url || lead.domain || lead.company || lead.id}
                     </div>
                   </div>
                   <input

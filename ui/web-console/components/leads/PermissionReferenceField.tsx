@@ -38,9 +38,9 @@ export function PermissionReferenceField({
         aria-describedby={error ? errorId : undefined}
       />
       <p className="text-xs text-foreground-muted">
-        Permission reference documents the lawful basis / campaign authorization
-        for processing this lead. Frontend requires it; server-side enforcement
-        is a separate control-plane concern.
+        Required for extraction / compliance. Documents the lawful basis /
+        campaign authorization for processing this lead. The control-plane
+        rejects extraction runs without it.
       </p>
       {error && (
         <p id={errorId} className="text-sm text-danger" role="alert">
