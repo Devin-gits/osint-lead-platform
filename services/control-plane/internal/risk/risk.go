@@ -41,6 +41,12 @@ type Report struct {
 	Factors []Factor `json:"factors"`
 }
 
+// Compute returns a deterministic risk score and level for the lead.
+//
+// - "error" or "unknown" status on a required validation module counts as a
+//   failure.
+// - "not_run" or a missing namespaced key counts as "not validated".
+// - "ok" and "partial" are treated as completed (partial is not a failure).
 func Compute(lead models.Lead) Report {
 	score := 0
 	factors := []Factor{}
@@ -50,11 +56,11 @@ func Compute(lead models.Lead) Report {
 		applicable = true
 		if email, ok := lead.Results["email_validate"].(map[string]any); ok {
 			status, _ := email["status"].(string)
-			if status == "error" {
-				factors = append(factors, Factor{Name: "email_validate_error", Points: EmailValidateErrorPoints, Message: "email_validate status is error"})
+			if status == "error" || status == "unknown" {
+				factors = append(factors, Factor{Name: "email_validate_error", Points: EmailValidateErrorPoints, Message: "email_validate status is " + status})
 				score += EmailValidateErrorPoints
 			}
-			if status != "error" {
+			if status == "ok" || status == "partial" {
 				flagPoints := 0
 				if b, ok := email["is_disposable"].(bool); ok && b {
 					factors = append(factors, Factor{Name: "email_disposable", Points: EmailValidateDisposablePoints, Message: "disposable email domain"})
@@ -73,7 +79,7 @@ func Compute(lead models.Lead) Report {
 				}
 				score += flagPoints
 			}
-			if status != "ok" && status != "error" && status != "partial" {
+			if status == "" || status == "not_run" {
 				factors = append(factors, Factor{Name: "email_not_validated", Points: EmailValidateNotRunPoints, Message: "email present but email_validate not run"})
 				score += EmailValidateNotRunPoints
 			}
@@ -87,24 +93,24 @@ func Compute(lead models.Lead) Report {
 		applicable = true
 		if phone, ok := lead.Results["phone_validate"].(map[string]any); ok {
 			status, _ := phone["status"].(string)
-			if status == "error" {
-				factors = append(factors, Factor{Name: "phone_validate_error", Points: PhoneValidateErrorPoints, Message: "phone_validate status is error"})
+			if status == "error" || status == "unknown" {
+				factors = append(factors, Factor{Name: "phone_validate_error", Points: PhoneValidateErrorPoints, Message: "phone_validate status is " + status})
 				score += PhoneValidateErrorPoints
 			}
-			if status == "ok" {
+			if status == "ok" || status == "partial" {
 				invalid := false
 				if b, ok := phone["is_valid_number"].(bool); ok && !b {
 					invalid = true
 				}
-				if b, ok := phone["is_possible"].(bool); ok && !b {
+				if b, ok := phone["format_valid"].(bool); ok && !b {
 					invalid = true
 				}
 				if invalid {
-					factors = append(factors, Factor{Name: "phone_invalid_or_impossible", Points: PhoneValidateInvalidPoints, Message: "phone parsed but marked invalid or impossible"})
+					factors = append(factors, Factor{Name: "phone_invalid_or_impossible", Points: PhoneValidateInvalidPoints, Message: "phone parsed but marked invalid"})
 					score += PhoneValidateInvalidPoints
 				}
 			}
-			if status != "ok" && status != "error" && status != "partial" {
+			if status == "" || status == "not_run" {
 				factors = append(factors, Factor{Name: "phone_not_validated", Points: PhoneValidateNotRunPoints, Message: "phone present but phone_validate not run"})
 				score += PhoneValidateNotRunPoints
 			}
@@ -118,8 +124,8 @@ func Compute(lead models.Lead) Report {
 		applicable = true
 		if di, ok := lead.Results["domain_intel"].(map[string]any); ok {
 			status, _ := di["status"].(string)
-			if status == "error" {
-				factors = append(factors, Factor{Name: "domain_intel_error", Points: DomainIntelErrorPoints, Message: "domain_intel status is error"})
+			if status == "error" || status == "unknown" {
+				factors = append(factors, Factor{Name: "domain_intel_error", Points: DomainIntelErrorPoints, Message: "domain_intel status is " + status})
 				score += DomainIntelErrorPoints
 			}
 			if status == "ok" || status == "partial" {
@@ -153,8 +159,8 @@ func Compute(lead models.Lead) Report {
 	if sf, ok := lead.Results["social_footprint"].(map[string]any); ok {
 		applicable = true
 		status, _ := sf["status"].(string)
-		if status == "error" {
-			factors = append(factors, Factor{Name: "social_footprint_error", Points: SocialFootprintErrorPoints, Message: "social_footprint status is error"})
+		if status == "error" || status == "unknown" {
+			factors = append(factors, Factor{Name: "social_footprint_error", Points: SocialFootprintErrorPoints, Message: "social_footprint status is " + status})
 			score += SocialFootprintErrorPoints
 		}
 	}
@@ -162,8 +168,8 @@ func Compute(lead models.Lead) Report {
 	if ce, ok := lead.Results["company_enrich"].(map[string]any); ok {
 		applicable = true
 		status, _ := ce["status"].(string)
-		if status == "error" {
-			factors = append(factors, Factor{Name: "company_enrich_error", Points: CompanyOrExtractionErrorPoints, Message: "company_enrich status is error"})
+		if status == "error" || status == "unknown" {
+			factors = append(factors, Factor{Name: "company_enrich_error", Points: CompanyOrExtractionErrorPoints, Message: "company_enrich status is " + status})
 			score += CompanyOrExtractionErrorPoints
 		}
 	}
@@ -171,8 +177,8 @@ func Compute(lead models.Lead) Report {
 	if ex, ok := lead.Results["extraction"].(map[string]any); ok {
 		applicable = true
 		status, _ := ex["status"].(string)
-		if status == "error" {
-			factors = append(factors, Factor{Name: "extraction_error", Points: CompanyOrExtractionErrorPoints, Message: "extraction status is error"})
+		if status == "error" || status == "unknown" {
+			factors = append(factors, Factor{Name: "extraction_error", Points: CompanyOrExtractionErrorPoints, Message: "extraction status is " + status})
 			score += CompanyOrExtractionErrorPoints
 		}
 	}
