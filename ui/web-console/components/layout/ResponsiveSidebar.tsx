@@ -42,7 +42,7 @@ const groups: NavGroup[] = [
       { href: "/command-center", label: "Command Center", icon: LayoutDashboard },
       { href: "/leads", label: "Leads", icon: Users },
       { href: "/runs", label: "Runs", icon: Play },
-      { href: "/audit", label: "Audit Log", icon: ScrollText, comingSoon: true },
+      { href: "/audit", label: "Audit Log", icon: ScrollText },
     ],
   },
   {
