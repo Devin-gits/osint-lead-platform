@@ -229,7 +229,7 @@ by design (to avoid credentials/policy leakage through shell history).
 | `EXTRACTION_BACKEND` | `crawl4ai` | Backend to use: `crawl4ai` or `firecrawl`. |
 | `EXTRACTION_TIMEOUT` | `45s` | Per-extraction timeout (Go duration). |
 | `EXTRACTION_MIN_INTERVAL` | `2s` | Minimum delay enforced between consecutive `Extract` calls on a reused `Extractor`. |
-| `EXTRACTION_CRAWL4AI_PYTHON` | `python3` | Python interpreter for the Crawl4AI wrapper. |
+| `EXTRACTION_CRAWL4AI_PYTHON` | `python3` | Python interpreter for the Crawl4AI wrapper. Point this at a venv Python (e.g., `modules/extraction/.venv/bin/python`) to get the real `ok` extraction path. |
 | `EXTRACTION_CRAWL4AI_WRAPPER` | auto-locate | Path to `wrapper/crawl4ai_extract.py`. |
 | `FIRECRAWL_API_KEY` | *(none)* | Bearer token for the Firecrawl hosted API. Required only for `firecrawl` backend. |
 | `FIRECRAWL_BASE_URL` | `https://api.firecrawl.dev/v1` | Firecrawl API base URL (allows future self-host). |
