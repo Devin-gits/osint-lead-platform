@@ -2,7 +2,7 @@
 
 **Author:** Devin (planning pass only)  
 **Date:** 2026-07-19  
-**Status:** Pass 1 — planning brief. No implementation. No dependencies installed.  
+**Status:** Pass 3B implementation complete in `modules/company-enrich`. Review amendments applied: P0 slim (`domain`/`name`/`website`), local provider always-on, optional DiscoLike Go HTTP adapter, no LinkedIn/LLM/Crunchbase, GitHub org lookup gated.  
 **Canonical repo:** `https://github.com/Devin-gits/osint-lead-platform`
 
 ---
