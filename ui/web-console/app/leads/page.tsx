@@ -52,8 +52,10 @@ const riskOptions = [
 const moduleStatusOptions = [
   { value: "", label: "All module status" },
   { value: "ok", label: "ok" },
+  { value: "partial", label: "partial" },
   { value: "unknown", label: "unknown" },
   { value: "skipped", label: "skipped" },
+  { value: "error", label: "error" },
   { value: "not_run", label: "not run" },
 ];
 

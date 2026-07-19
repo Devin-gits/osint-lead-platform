@@ -9,7 +9,7 @@ export interface AuditLog {
   module: string;
   tool: string;
   checked_at: string;
-  status: "ok" | "unknown" | "skipped";
+  status: "ok" | "partial" | "unknown" | "skipped" | "error";
   legal_basis: string;
   subject?: {
     email?: string;

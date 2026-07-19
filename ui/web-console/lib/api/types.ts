@@ -6,7 +6,7 @@ export type PipelineStage =
 
 export type RiskLevel = "low" | "medium" | "high" | "unknown";
 
-export type ModuleStatus = "ok" | "unknown" | "skipped" | "pending" | "not_run";
+export type ModuleStatus = "ok" | "partial" | "unknown" | "skipped" | "pending" | "not_run" | "error";
 
 export type ModuleName =
   | "email-validate"
@@ -200,7 +200,7 @@ export interface AuditEvent {
   module: ModuleName | "pipeline";
   tool: string;
   checked_at: string;
-  status: "ok" | "unknown" | "skipped";
+  status: "ok" | "partial" | "unknown" | "skipped" | "error";
   legal_basis: string;
   subject?: {
     email?: string;

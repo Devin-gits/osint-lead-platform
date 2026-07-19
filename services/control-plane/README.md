@@ -126,6 +126,21 @@ All endpoints return JSON envelopes:
 
 ### Manual smoke test
 
+To exercise the full extraction `ok` path, install Crawl4AI first:
+
+```bash
+cd modules/extraction
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# Only if Crawl4AI reports a missing browser:
+# playwright install chromium
+cd ../../services/control-plane
+go run ./cmd/server
+```
+
+Then, with the server running on `http://localhost:8080`:
+
 ```bash
 # 1. Create a lead with an email, domain, and URL
 LEAD=$(curl -s -X POST http://localhost:8080/api/leads \

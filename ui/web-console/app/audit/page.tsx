@@ -32,8 +32,10 @@ const moduleOptions = [
 const statusOptions = [
   { value: "", label: "All statuses" },
   { value: "ok", label: "ok" },
+  { value: "partial", label: "partial" },
   { value: "unknown", label: "unknown" },
   { value: "skipped", label: "skipped" },
+  { value: "error", label: "error" },
 ];
 
 const PAGE_SIZE = 25;
@@ -42,8 +44,12 @@ function statusVariant(status: string) {
   switch (status) {
     case "ok":
       return "success" as const;
+    case "partial":
+      return "warning" as const;
     case "skipped":
       return "warning" as const;
+    case "error":
+      return "danger" as const;
     case "unknown":
       return "muted" as const;
     default:

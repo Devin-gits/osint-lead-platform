@@ -93,7 +93,7 @@ function validate(values: FormState): FormErrors {
   }
   if (!hasContact(values)) {
     errors.contact =
-      "Provide at least one contact point: email, phone, domain, or company.";
+      "Provide at least one contact point: email, phone, domain, URL, or company.";
   }
   return errors;
 }
@@ -119,6 +119,15 @@ export function CreateLeadFlow() {
     message: string;
   } | null>(null);
   const presetRef = useRef(false);
+
+  // If the user clears the URL after selecting extraction, remove extraction from the selection.
+  useEffect(() => {
+    if (!form.url.trim() && selected.has("extraction")) {
+      const next = new Set(selected);
+      next.delete("extraction");
+      setSelected(next);
+    }
+  }, [form.url, selected]);
 
   const create = useCreateLead();
   const runModules = useRunLeadModules();
@@ -380,13 +389,16 @@ export function CreateLeadFlow() {
               )}
               {modules?.map((module) => {
                 const available = module.dev_status === "available";
+                const needsUrl = module.name === "extraction";
+                const urlMissing = needsUrl && !form.url.trim();
+                const canSelect = available && !urlMissing;
                 const checked = selected.has(module.name);
                 return (
                   <label
                     key={module.name}
                     className={cn(
                       "flex items-start gap-3 rounded-lg border p-4 transition-colors",
-                      available
+                      canSelect
                         ? "cursor-pointer hover:border-primary/30"
                         : "cursor-not-allowed opacity-60",
                       checked
@@ -398,7 +410,7 @@ export function CreateLeadFlow() {
                       type="checkbox"
                       className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
                       checked={checked}
-                      disabled={!available}
+                      disabled={!canSelect}
                       onChange={() => toggleModule(module.name)}
                       aria-describedby={`${module.name}-hint`}
                     />
@@ -428,11 +440,14 @@ export function CreateLeadFlow() {
                         className="mt-1 text-xs text-foreground-muted"
                       >
                         Minimum input: {module.min_input_field}
+                        {needsUrl && urlMissing && (
+                          <span className="ml-1 text-warning"> — Add a URL in step 1</span>
+                        )}
                       </p>
                     </div>
                   </label>
                 );
-              })}
+              })} 
             </div>
           )}
 
