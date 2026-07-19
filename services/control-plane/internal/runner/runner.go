@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	companyenrich "github.com/Moyeil-73/osint-lead-platform/modules/company-enrich"
@@ -38,6 +39,14 @@ type Runner struct {
 	socialVal *socialfootprint.Validator
 	extractor extractionRunner
 	enricher  *companyenrich.Enricher
+
+	jobs       chan job
+	activeRuns map[string]string
+	started    bool
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // New builds a Runner backed by the supplied Store.
@@ -66,22 +75,15 @@ func New(s store.Store, timeout time.Duration) *Runner {
 	}
 }
 
-// RunSingle runs the requested modules on a single lead and returns the updated
-// lead. It creates and finalises a PipelineRun of type "single".
+// RunSingle runs the requested modules on a single lead synchronously. It is
+// used by tests and by the async worker when a single job is dequeued.
 func (r *Runner) RunSingle(ctx context.Context, leadID string, req models.RunModulesRequest) (models.Lead, error) {
 	lead, err := r.store.GetLead(ctx, leadID)
 	if err != nil {
 		return models.Lead{}, err
 	}
 
-	legalBasis := req.LegalBasis
-	if legalBasis == "" {
-		legalBasis = models.LegalBasisGDPR
-	}
-	permissionRef := req.PermissionRef
-	if permissionRef == "" {
-		permissionRef = lead.PermissionRef
-	}
+	legalBasis, permissionRef := resolveBasisAndRef(req.LegalBasis, req.PermissionRef, lead.PermissionRef)
 
 	run := models.PipelineRun{
 		ID:              util.NewID(),
@@ -97,34 +99,10 @@ func (r *Runner) RunSingle(ctx context.Context, leadID string, req models.RunMod
 		return models.Lead{}, fmt.Errorf("create run: %w", err)
 	}
 
-	lead, auditEvents, err := r.runModulesOnLead(ctx, lead, req.Modules, run.ID, legalBasis, permissionRef)
-	if err != nil {
-		r.finaliseRun(ctx, run, nil, err)
-		return models.Lead{}, err
-	}
-
-	if _, err := r.store.UpdateLead(ctx, lead); err != nil {
-		r.finaliseRun(ctx, run, auditEvents, err)
-		return models.Lead{}, fmt.Errorf("update lead: %w", err)
-	}
-
-	auditIDs := make([]string, 0, len(auditEvents))
-	for _, e := range auditEvents {
-		saved, err := r.store.CreateAuditEvent(ctx, e)
-		if err != nil {
-			r.finaliseRun(ctx, run, auditEvents, err)
-			return models.Lead{}, fmt.Errorf("save audit event: %w", err)
-		}
-		auditIDs = append(auditIDs, saved.ID)
-	}
-
-	r.finaliseRun(ctx, run, auditEvents, nil)
-	_ = auditIDs
-	return lead, nil
+	return r.executeSingle(ctx, lead, run, req)
 }
 
-// RunBatch runs modules across multiple leads and returns the created PipelineRun.
-// Rate limiting is applied to the social-footprint module path.
+// RunBatch runs modules across multiple leads synchronously.
 func (r *Runner) RunBatch(ctx context.Context, req models.PipelineRunRequest) (models.PipelineRun, error) {
 	if len(req.LeadIDs) == 0 {
 		return models.PipelineRun{}, store.ErrInvalid
@@ -152,7 +130,47 @@ func (r *Runner) RunBatch(ctx context.Context, req models.PipelineRunRequest) (m
 		return models.PipelineRun{}, fmt.Errorf("create run: %w", err)
 	}
 
-	allAuditEvents := []models.AuditEvent{}
+	return r.executeBatch(ctx, run, req)
+}
+
+// executeSingle performs the module work for a single lead and finalises the run.
+func (r *Runner) executeSingle(ctx context.Context, lead models.Lead, run models.PipelineRun, req models.RunModulesRequest) (models.Lead, error) {
+	legalBasis, permissionRef := resolveBasisAndRef(req.LegalBasis, req.PermissionRef, lead.PermissionRef)
+
+	lead, auditEvents, err := r.runModulesOnLead(ctx, lead, req.Modules, run.ID, legalBasis, permissionRef)
+	if err != nil {
+		r.finaliseRun(ctx, run, nil, err)
+		return models.Lead{}, err
+	}
+
+	if _, err := r.store.UpdateLead(ctx, lead); err != nil {
+		r.finaliseRun(ctx, run, auditEvents, err)
+		return models.Lead{}, fmt.Errorf("update lead: %w", err)
+	}
+
+	auditIDs := make([]string, 0, len(auditEvents))
+	for _, e := range auditEvents {
+		saved, err := r.store.CreateAuditEvent(ctx, e)
+		if err != nil {
+			r.finaliseRun(ctx, run, auditEvents, err)
+			return models.Lead{}, fmt.Errorf("save audit event: %w", err)
+		}
+		auditIDs = append(auditIDs, saved.ID)
+	}
+
+	r.finaliseRun(ctx, run, auditEvents, nil)
+	_ = auditIDs
+	return lead, nil
+}
+
+// executeBatch performs the module work for all leads in a batch and finalises
+// the run. It uses the same PipelineRun created by the caller.
+func (r *Runner) executeBatch(ctx context.Context, run models.PipelineRun, req models.PipelineRunRequest) (models.PipelineRun, error) {
+	legalBasis := req.LegalBasis
+	if legalBasis == "" {
+		legalBasis = models.LegalBasisGDPR
+	}
+
 	hasError := false
 	for _, leadID := range req.LeadIDs {
 		lead, err := r.store.GetLead(ctx, leadID)
@@ -184,7 +202,6 @@ func (r *Runner) RunBatch(ctx context.Context, req models.PipelineRunRequest) (m
 				continue
 			}
 			run.AuditEventIDs = append(run.AuditEventIDs, saved.ID)
-			allAuditEvents = append(allAuditEvents, saved)
 		}
 	}
 
@@ -202,6 +219,18 @@ func (r *Runner) RunBatch(ctx context.Context, req models.PipelineRunRequest) (m
 		return run, fmt.Errorf("update run: %w", err)
 	}
 	return updated, nil
+}
+
+func resolveBasisAndRef(reqBasis, reqRef, leadRef string) (string, string) {
+	legalBasis := reqBasis
+	if legalBasis == "" {
+		legalBasis = models.LegalBasisGDPR
+	}
+	permissionRef := reqRef
+	if permissionRef == "" {
+		permissionRef = leadRef
+	}
+	return legalBasis, permissionRef
 }
 
 // runModulesOnLead executes the requested modules, updates the lead's results and

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink, Download, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
-import { useLead, useRunLeadModules, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead, useLeadRisk } from "@/lib/api/hooks";
+import { useLead, useRunLeadModules, useRunStatus, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead, useLeadRisk } from "@/lib/api/hooks";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -70,8 +71,30 @@ export default function LeadDetailPage() {
   const demote = useDemoteLead();
   const exportLead = useExportLead();
   const { addToast } = useToast();
-  const [running, setRunning] = useState<ModuleName | null>(null);
+  const queryClient = useQueryClient();
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const { data: runStatus } = useRunStatus(activeRunId ?? undefined);
   const [transitioning, setTransitioning] = useState(false);
+
+  // Sync active run id from the lead record and clear it when the run finishes.
+  useEffect(() => {
+    if (activeRunId) return;
+    if (lead?.active_run_id) {
+      setActiveRunId(lead.active_run_id);
+    }
+  }, [lead?.active_run_id, activeRunId]);
+
+  useEffect(() => {
+    if (!runStatus) return;
+    if (runStatus.status === "completed" || runStatus.status === "partial" || runStatus.status === "failed") {
+      setActiveRunId(null);
+      queryClient.invalidateQueries({ queryKey: ["lead", id] });
+      queryClient.invalidateQueries({ queryKey: ["risk", id] });
+      queryClient.invalidateQueries({ queryKey: ["readiness", id] });
+      queryClient.invalidateQueries({ queryKey: ["audit"] });
+      addToast(`Run ${runStatus.status}`, runStatus.status === "completed" ? "success" : "warning");
+    }
+  }, [runStatus, id, queryClient, addToast]);
 
   const handlePromote = async () => {
     setTransitioning(true);
@@ -129,29 +152,20 @@ export default function LeadDetailPage() {
   };
 
   const handleRun = async (module: ModuleName) => {
-    setRunning(module);
+    if (!lead) return;
     try {
-      const updated = await run.mutateAsync({
+      const res = await run.mutateAsync({
         id,
         body: {
           modules: [module],
-          ...(lead?.permission_ref ? { permission_ref: lead.permission_ref } : {}),
+          ...(lead.permission_ref ? { permission_ref: lead.permission_ref } : {}),
         },
       });
-      const resultKey = module.replace(/-/g, "_");
-      const result = ((updated as unknown) as Record<string, unknown>)[resultKey] as { status?: string } | undefined;
-      const status = result?.status || "unknown";
-      const variant =
-        status === "ok" ? "success" : status === "skipped" || status === "partial" ? "warning" : "danger";
-      addToast(`${module} finished with status: ${status}`, variant);
-      refetch();
+      setActiveRunId(res.run_id);
+      addToast(`Module ${module} queued`, "info");
     } catch (err) {
-      addToast(
-        err instanceof Error ? err.message : `Failed to run ${module}`,
-        "danger"
-      );
-    } finally {
-      setRunning(null);
+      const message = err instanceof Error ? err.message : `Failed to run ${module}`;
+      addToast(message, "danger");
     }
   };
 
@@ -243,24 +257,36 @@ export default function LeadDetailPage() {
               <span>No domain, company, or URL — company enrichment needs one of them.</span>
             </div>
           )}
+          {activeRunId && runStatus && (
+            <div className="mb-3 rounded-md border border-primary/20 bg-primary/10 p-2 text-xs text-primary">
+              <span className="font-medium">Run {runStatus.id.slice(0, 8)}</span> is{" "}
+              <span className="font-semibold capitalize">{runStatus.status}</span>.
+              {runStatus.status === "queued" || runStatus.status === "running" ? " Polling..." : ""}
+            </div>
+          )}
           <div className="space-y-2">
             {moduleOrder.map(({ label, module }) => {
               const mod = modules?.find((m) => m.name === module);
               const { canRun, disabledReason } = moduleRunState(module, mod, lead);
+              const busy = !!activeRunId || run.isPending;
               return (
                 <Button
                   key={module}
                   size="sm"
                   variant="secondary"
                   className="w-full justify-between"
-                  disabled={!canRun || running !== null || run.isPending}
+                  disabled={!canRun || busy}
                   onClick={() => handleRun(module)}
                 >
                   <span className="flex items-center gap-2">
                     <Play className="h-3.5 w-3.5" />
                     {label}
                   </span>
-                  {disabledReason && <span className="text-[10px] opacity-70">{disabledReason}</span>}
+                  {busy ? (
+                    <span className="text-[10px] opacity-70">running...</span>
+                  ) : disabledReason ? (
+                    <span className="text-[10px] opacity-70">{disabledReason}</span>
+                  ) : null}
                 </Button>
               );
             })}
@@ -298,7 +324,7 @@ export default function LeadDetailPage() {
                   module={module}
                   result={result}
                   onRun={() => handleRun(module)}
-                  isRunning={running === module}
+                  isRunning={!!activeRunId}
                   canRun={canRun}
                   disabledReason={disabledReason}
                 />

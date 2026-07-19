@@ -218,6 +218,7 @@ export interface LeadRecord extends RawLead {
   stage: PipelineStage;
   risk_level: RiskLevel;
   risk_score?: number;
+  active_run_id?: string;
   email_validate?: EmailValidateResult;
   domain_intel?: DomainIntelResult;
   phone_validate?: PhoneValidateResult;
@@ -286,7 +287,7 @@ export interface PipelineRun {
   type: "single" | "batch";
   started_at: string;
   finished_at?: string;
-  status: "running" | "completed" | "failed" | "partial";
+  status: "queued" | "running" | "completed" | "failed" | "partial";
   lead_ids: string[];
   modules_executed: string[];
   audit_event_ids: string[];

@@ -41,10 +41,10 @@ HTTP status codes:
 |------|------|
 | `200` | Success (GET/POST) |
 | `201` | `POST /api/leads` created |
-| `202` | `POST /api/pipelines/run` accepted — poll `GET /api/runs/{id}` |
+| `202` | `POST /api/leads/{id}/run` and `POST /api/pipelines/run` accepted — poll `GET /api/runs/{id}` |
 | `400` | Bad request / missing required query or body field |
 | `404` | Resource not found (`lead`, `module`, `run`) |
-| `409` | Lead not ready for promotion/export (`/promote`, `/export`) |
+| `409` | Lead has active run (`/run`) or is not ready for promotion/export (`/promote`, `/export`) |
 | `500` | Unexpected server error |
 
 ### Pagination
@@ -271,6 +271,7 @@ export interface LeadRecord extends RawLead {
   stage: PipelineStage;
   risk_level: RiskLevel;
   risk_score?: number;
+  active_run_id?: string;
   email_validate?: EmailValidateResult;
   domain_intel?: DomainIntelResult;
   phone_validate?: PhoneValidateResult;
@@ -350,7 +351,7 @@ export interface PipelineRun {
   type: "single" | "batch";
   started_at: string;
   finished_at?: string;
-  status: "running" | "completed" | "failed" | "partial";
+  status: "queued" | "running" | "completed" | "failed" | "partial";
   lead_ids: string[];
   modules_executed: string[];
   audit_event_ids: string[];
@@ -558,7 +559,8 @@ Return a single `LeadRecord` with `audit_events` hydrated.
 
 ### `POST /api/leads/{id}/run`
 
-Run one or more modules on a single lead. Returns the full `LeadRecord` with `audit_events` hydrated after the run.
+Run one or more modules on a single lead. The job is enqueued and executed
+asynchronously by the worker pool.
 
 **Request body**
 
@@ -572,20 +574,22 @@ Run one or more modules on a single lead. Returns the full `LeadRecord` with `au
 
 `modules` is required. `permission_ref` and `legal_basis` are optional; they default to the lead's stored `permission_ref` and GDPR Art.6(1)(f) legitimate interest.
 
-**Response `200`**
+**Response `202`** — job accepted:
 
 ```json
 {
   "data": {
-    "id": "lead-001",
-    "stage": "validated",
-    "risk_level": "low",
-    "email_validate": { "status": "ok", ... },
-    "domain_intel": { "status": "ok", ... },
-    "audit_events": [ ... ]
+    "run_id": "run-001",
+    "status": "queued"
   }
 }
 ```
+
+**Response `409`** — the lead already has a `queued` or `running` job.
+
+Poll `GET /api/runs/{run_id}` until the status is `completed`, `partial`, or
+`failed`, then refetch the lead to see module results, updated `risk_level`,
+and `audit_events`.
 
 ### `GET /api/leads/{id}/readiness`
 
@@ -858,7 +862,7 @@ Return structured compliance content derived from `docs/compliance.md`.
 
 ### `POST /api/pipelines/run`
 
-Batch run endpoint. Accepts a list of lead IDs and modules, creates a `PipelineRun`, executes the modules against each lead sequentially in the same request, and returns `202 Accepted` with the run ID. The run is updated to `completed` or `partial` before the response is sent, so the UI may immediately navigate to `/runs/{run_id}` or poll `GET /api/runs/{id}` as a future-proof pattern.
+Batch run endpoint. Accepts a list of lead IDs and modules, creates a `PipelineRun`, enqueues the job, and returns `202 Accepted` with the run ID. The worker pool executes the modules against each lead sequentially; poll `GET /api/runs/{id}` until the status is terminal. If any lead in the batch already has an active run, the request returns `409 Conflict`.
 
 **Request body**
 
@@ -877,12 +881,14 @@ interface PipelineRunRequest {
 {
   "data": {
     "accepted": true,
-    "run_id": "run-001"
+    "run_id": "run-001",
+    "status": "queued"
   }
 }
 ```
 
-The UI toasts a link to `/runs/{run_id}` and may continue polling the run detail.
+The UI toasts a link to `/runs/{run_id}` and polls the run detail until the
+status is terminal.
 
 ---
 

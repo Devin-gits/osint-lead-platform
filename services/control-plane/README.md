@@ -30,6 +30,7 @@ leads, audit events, and pipeline runs.
 | `PORT` | `8080` | HTTP port |
 | `LISTEN_HOST` | `127.0.0.1` | Bind address. Default is loopback only (pre-production). Set to `0.0.0.0` for real deployment. |
 | `CORS_ORIGIN` | `http://localhost:3000` | UI dev server origin |
+| `CONTROL_PLANE_WORKERS` | `2` | Number of async worker goroutines. Must be `>= 1`. |
 | `MODULE_TIMEOUT` | `90s` | Shared timeout for email/phone and floor for domain-intel (60s). Social-footprint ignores this and uses its own 90s per-handle default. |
 | `HTTP_READ_TIMEOUT` | `30s` | HTTP server read timeout |
 | `HTTP_WRITE_TIMEOUT` | `180s` | HTTP server write timeout. Must exceed the longest expected module run (e.g., Maigret multi-handle). |
@@ -86,24 +87,16 @@ go test ./...
 
 For Postgres-backed tests, set `TEST_DATABASE_URL`.
 
-## Recommended timeout profiles
+## Async execution
 
-For email/phone-only runs the defaults are fine. For `domain-intel` and
-`social-footprint` (Maigret can check up to 3 handles × 90s each plus rate
-limits), raise the HTTP write timeout so the server does not close the
-connection before the runner finishes:
+Module runs are executed by an in-process worker pool. `POST /api/leads/{id}/run`
+and `POST /api/pipelines/run` return `202 Accepted` immediately and enqueue a
+job. Poll `GET /api/runs/{id}` until the status is `completed`, `partial`, or
+`failed`, then refetch the lead.
 
-```bash
-# Fast local machine with Maigret wrapper installed
-export HTTP_WRITE_TIMEOUT=300s
-
-# Slower network / many handles
-export HTTP_WRITE_TIMEOUT=600s
-```
-
-`MODULE_TIMEOUT` still controls email/phone and acts as a 60s floor for
-domain-intel; `social-footprint` ignores it and uses `SOCIAL_FOOTPRINT_TIMEOUT`
-(default `90s`) for each handle.
+Because execution is no longer synchronous, the `HTTP_WRITE_TIMEOUT` only needs
+to protect the API response itself. Long module runs (e.g. Maigret multi-handle)
+execute inside the worker pool without holding an HTTP connection.
 
 ## API
 
@@ -119,7 +112,7 @@ All endpoints return JSON envelopes:
 | `POST` | `/api/leads` | Create a lead |
 | `GET`  | `/api/leads` | List leads (stage, risk, module_status, q, page, page_size) |
 | `GET`  | `/api/leads/{id}` | Get a lead with hydrated audit events |
-| `POST` | `/api/leads/{id}/run` | Run modules on one lead |
+| `POST` | `/api/leads/{id}/run` | Enqueue modules on one lead (returns `202` + `run_id`) |
 | `GET`  | `/api/modules` | List modules |
 | `GET`  | `/api/modules/{name}` | Module detail |
 | `GET`  | `/api/audit` | List audit events |
@@ -146,59 +139,63 @@ go run ./cmd/server
 Then, with the server running on `http://localhost:8080`:
 
 ```bash
+# Helper: enqueue a module run, poll until terminal, then print the lead's result key.
+run_module() {
+  local lead_id=$1
+  local module=$2
+  local key=${3:-$module}
+  key=$(echo "$key" | tr '-' '_')
+  local run_id
+  run_id=$(curl -s -X POST "http://localhost:8080/api/leads/$lead_id/run" \
+    -H 'Content-Type: application/json' \
+    -d "{\"modules\":[\"$module\"]}" | jq -r '.data.run_id')
+  for i in {1..60}; do
+    status=$(curl -s "http://localhost:8080/api/runs/$run_id" | jq -r '.data.status')
+    if [[ "$status" == "completed" || "$status" == "partial" || "$status" == "failed" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  curl -s "http://localhost:8080/api/leads/$lead_id" | jq ".data.$key"
+}
+
 # 1. Create a lead with an email, domain, and URL
 LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"email":"support@github.com","company":"GitHub","domain":"github.com","url":"https://github.com","permission_ref":"p-001"}' | jq -r '.data.id')
 
 # 2. Run email-validate
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["email-validate"]}' | jq '.data.email_validate'
+run_module "$LEAD" "email-validate"
 
 # 3. Run domain-intel (optionally set DOMAIN_INTEL_HARVESTER_BIN for theHarvester)
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["domain-intel"]}' | jq '.data.domain_intel'
+run_module "$LEAD" "domain-intel"
 
 # 4. Run social-footprint (uses email + any enriched domain_intel.harvester)
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["social-footprint"]}' | jq '.data.social_footprint'
+run_module "$LEAD" "social-footprint"
 
 # 5. Extraction on a lead with a public URL and permission_ref
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["extraction"]}' | jq '.data.extraction'
+run_module "$LEAD" "extraction"
 
 # 6. Company enrichment on a lead with domain + company + permission_ref
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich'
+run_module "$LEAD" "company-enrich"
 
 # 7. Company enrichment on a domain-only lead returns partial with an empty name
 COMPANYONLY=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"domain":"example.com","permission_ref":"p-002"}' | jq -r '.data.id')
-curl -s -X POST "http://localhost:8080/api/leads/$COMPANYONLY/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["company-enrich"]}' | jq '.data.company_enrich | {status, fields: .fields | {domain, name, website}}'
+run_module "$COMPANYONLY" "company-enrich" | jq '{status, fields: .fields | {domain, name, website}}'
 
 # 8. Extraction on a lead without permission_ref stays skipped
 NOPERM=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com"}' | jq -r '.data.id')
-curl -s -X POST "http://localhost:8080/api/leads/$NOPERM/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["extraction"]}' | jq '.data | {stage, extraction}'
+run_module "$NOPERM" "extraction" | jq '{stage, extraction}'
 
 # 9. Social-footprint on a lead with no usable handle stays skipped without crashing
 HANDLELESS=$(curl -s -X POST http://localhost:8080/api/leads \
   -H 'Content-Type: application/json' \
   -d '{"company":"NoHandle"}' | jq -r '.data.id')
-curl -s -X POST "http://localhost:8080/api/leads/$HANDLELESS/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["social-footprint"]}' | jq '.data | {stage, social_footprint}'
+run_module "$HANDLELESS" "social-footprint" | jq '{stage, social_footprint}'
 
 # 10. Get the lead with audit events (raw_stderr_json and legal_basis)
 curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events'
@@ -227,6 +224,7 @@ With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
 - Lead records expose module results as top-level keys (`email_validate`,
   `phone_validate`, `domain_intel`, `social_footprint`, `extraction`, `company_enrich`). The internal `results`
   map is not part of the public JSON.
+- Lead records include `active_run_id` when a run is `queued` or `running`.
 - `url` is accepted at creation time and is the required input for `extraction`;
   `extraction` requires `permission_ref` (from the lead or run request).
 - `risk_level` is one of `low`, `medium`, `high`, or `unknown`.
@@ -235,6 +233,8 @@ With SMTP disabled, `deliverable` is typically `"unknown"` while `status` is
   lead with no domain stays `raw`). `extraction` and `company-enrich` advance to
   `enriched` when they report `ok`; `company-enrich` `partial` (e.g. domain-only)
   stays `raw` by design.
+- `POST /api/leads/{id}/run` and `POST /api/pipelines/run` return `202 Accepted`
+  with `run_id`; poll `GET /api/runs/{id}` until terminal.
 - Audit events use `raw_stderr_json` and include `legal_basis` and
   sanitized `subject.url` on every line.
 

@@ -34,7 +34,7 @@ create_lead() {
     -d "$1" | jq -r '.data.id // empty'
 }
 
-# Helper: run modules
+# Helper: enqueue modules and poll until terminal
 run_modules() {
   local lead_id=$1
   shift
@@ -43,9 +43,21 @@ run_modules() {
     [ -n "$mods" ] && mods="${mods},"
     mods="${mods}${m}"
   done
-  curl -s -X POST "${BASE_URL}/api/leads/${lead_id}/run" \
+  local run_id
+  run_id=$(curl -s -X POST "${BASE_URL}/api/leads/${lead_id}/run" \
     -H 'Content-Type: application/json' \
-    -d "{\"modules\":[${mods}]}" | jq -r '.data'
+    -d "{\"modules\":[${mods}]}" | jq -r '.data.run_id // empty')
+  if [ -z "$run_id" ]; then
+    echo "ERROR: no run_id returned" >&2
+    return 1
+  fi
+  for i in {1..60}; do
+    status=$(curl -s "${BASE_URL}/api/runs/${run_id}" | jq -r '.data.status // empty')
+    if [ "$status" = "completed" ] || [ "$status" = "partial" ] || [ "$status" = "failed" ]; then
+      break
+    fi
+    sleep 1
+  done
 }
 
 # Helper: HTTP status code of promote

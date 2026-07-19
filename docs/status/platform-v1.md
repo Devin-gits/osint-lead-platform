@@ -21,7 +21,7 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 
 - `/` redirects to `/leads`.
 - `/leads` — list, filters (stage, risk, module_status, q), stage funnel, multi-select bulk actions for every `available` module, live pagination.
-- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), readiness card with promote/demote/export actions, risk score/level with factor list, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
+- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), async run banner with live status polling, readiness card with promote/demote/export actions, risk score/level with factor list, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
 - `/modules` — grouped by `available` / `in_development` / `planned`.
 - `/modules/[name]` — module docs from the registry.
 - `/runs` and `/runs/[id]` — pipeline run timeline and detail.
@@ -66,11 +66,12 @@ With the API running:
 make smoke-api    # company-enrich ok/partial/missing-perm_ref paths
 make smoke-crm    # crm_ready promote/demote/export stub (requires API)
 make smoke-risk   # deterministic risk_score v2 sanity check (requires API)
+make smoke-async  # async worker queue sanity check (requires API)
 make smoke        # extraction smoke (requires API)
 make smoke-ok     # extraction smoke, requires ok/partial
 ```
 
-`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. `make smoke-crm` and `make smoke-risk` exercise the promotion and risk-score flows. All use deterministic local providers, so no paid API keys are required.
+`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. `make smoke-crm`, `make smoke-risk`, and `make smoke-async` exercise promotion, risk-score, and async worker flows. All use deterministic local providers, so no paid API keys are required.
 
 ### Full extraction `ok` path
 
@@ -186,11 +187,11 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 ## Known limitations
 
 - **Social top-level status** can be `"ok"` even when every individual handle is `"unknown"` because the runner only degrades the lead if the module itself errors; the UI panel renders per-handle status chips.
-- **Multi-handle duration** can exceed the default HTTP write timeout; operators must raise `HTTP_WRITE_TIMEOUT`.
+- **Module runs are async.** `POST /api/leads/{id}/run` returns `202` immediately. Long runs execute in a worker pool; `HTTP_WRITE_TIMEOUT` no longer needs to cover Maigret multi-handle durations.
 - **crm_ready stage** requires explicit promotion via `/api/leads/{id}/promote` once readiness rules pass; the stage machine still stops at `validated` from module runs.
 - **Risk is deterministic** via `internal/risk.Compute()` using module results + lead fields; score is 0–100 and bands map to `low`/`medium`/`high`/`unknown`.
 - **Compliance summary** is static governance content (hard rules, risk table, checklist, exclusions). It does not yet return numeric stats or per-run scores.
-- **Async long runs** are not supported; batch runs execute synchronously inside the HTTP request.
+- **In-process queue.** The async worker pool is in-memory and single-instance; queued jobs are lost on restart. An external queue is needed for multi-replica deployments.
 
 ---
 
@@ -199,5 +200,5 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 - `crm_ready` auto-demotion when a re-run invalidates a previously promoted lead.
 - Configurable risk weights and per-module fine-tuning.
 - `company-enrich`: fully available (module, control-plane, UI Company tab, CI, smoke runbook).
-- Async worker for long-running Maigret/theHarvester batch jobs.
+- Durable external queue for multi-replica worker deployments.
 - Retention/deletion enforcement in the backend.
