@@ -165,6 +165,41 @@ export interface ExtractionResult extends LeadResultMeta {
   };
 }
 
+export interface CompanyEnrichResult extends LeadResultMeta {
+  status: ModuleStatus;
+  source_tool?: string;
+  confidence?: number;
+  reason?: string;
+  fields?: {
+    domain?: string;
+    name?: string;
+    legal_name?: string;
+    website?: string;
+    description?: string;
+    founded?: number | null;
+    employee_count?: number | null;
+    employee_count_range?: string;
+    headquarters?: {
+      country?: string;
+      state?: string;
+      city?: string;
+      address?: string;
+    } | null;
+    industry?: string[];
+    tech_stack?: string[];
+    social_links?: Record<string, string>;
+    sources?: string[];
+  };
+  metadata?: {
+    backend?: string;
+    legal_basis?: string;
+    permission_ref?: string;
+    duration_ms?: number;
+    limits_applied?: string[] | string;
+  };
+  checked_at?: string;
+}
+
 export interface RawLead {
   id: string;
   name?: string;
@@ -188,6 +223,7 @@ export interface LeadRecord extends RawLead {
   phone_validate?: PhoneValidateResult;
   social_footprint?: SocialFootprintResult;
   extraction?: ExtractionResult;
+  company_enrich?: CompanyEnrichResult;
   audit_events: AuditEvent[];
 }
 

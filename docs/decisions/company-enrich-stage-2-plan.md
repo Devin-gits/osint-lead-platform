@@ -2,7 +2,7 @@
 
 **Author:** Devin (planning pass only)  
 **Date:** 2026-07-19  
-**Status:** Pass 3B module implementation and Pass 3C control-plane wiring complete. Review amendments applied: P0 slim (`domain`/`name`/`website`), local provider always-on, optional DiscoLike Go HTTP adapter, no LinkedIn/LLM/Crunchbase, GitHub org lookup gated, no invented company names from domain roots.  
+**Status:** Pass 3B module implementation, Pass 3C control-plane wiring, and Pass 3D UI Company tab complete. Review amendments applied: P0 slim (`domain`/`name`/`website`), local provider always-on, optional DiscoLike Go HTTP adapter, no LinkedIn/LLM/Crunchbase, GitHub org lookup gated, no invented company names from domain roots.  
 **Canonical repo:** `https://github.com/Devin-gits/osint-lead-platform`
 
 ---
