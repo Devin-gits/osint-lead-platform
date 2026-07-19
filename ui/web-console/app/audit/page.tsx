@@ -62,6 +62,15 @@ function formatTimestamp(iso: string): string {
   });
 }
 
+function formatStderr(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return raw;
+  }
+}
+
 function subjectSummary(event: AuditEvent): string {
   if (!event.subject) return "—";
   const parts: string[] = [];
@@ -196,6 +205,12 @@ export default function AuditPage() {
           />
         ) : (
           <>
+            {query && (
+              <div className="px-4 py-2 text-xs text-foreground-muted">
+                Filtering this page only ({filtered.length} event{filtered.length !== 1 ? "s" : ""}).
+                Clear search to use server pagination.
+              </div>
+            )}
             {/* Desktop list */}
             <div className="hidden sm:block">
               <div className="divide-y divide-border">
@@ -279,7 +294,7 @@ export default function AuditPage() {
                               raw_stderr_json
                             </div>
                             <pre className="overflow-x-auto rounded bg-surface p-2 font-mono text-xs text-foreground-muted">
-                              {event.raw_stderr_json}
+                              {formatStderr(event.raw_stderr_json)}
                             </pre>
                           </div>
                         )}
@@ -348,7 +363,7 @@ export default function AuditPage() {
                       </div>
                       {event.raw_stderr_json && (
                         <pre className="mt-2 overflow-x-auto rounded bg-surface p-2 font-mono text-xs text-foreground-muted">
-                          {event.raw_stderr_json}
+                          {formatStderr(event.raw_stderr_json)}
                         </pre>
                       )}
                       {!event.raw_stderr_json && (
