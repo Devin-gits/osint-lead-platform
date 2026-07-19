@@ -21,7 +21,7 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 
 - `/` redirects to `/leads`.
 - `/leads` — list, filters (stage, risk, module_status, q), stage funnel, multi-select bulk actions for every `available` module, live pagination.
-- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), readiness card with promote/demote/export actions, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
+- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), readiness card with promote/demote/export actions, risk score/level with factor list, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
 - `/modules` — grouped by `available` / `in_development` / `planned`.
 - `/modules/[name]` — module docs from the registry.
 - `/runs` and `/runs/[id]` — pipeline run timeline and detail.
@@ -63,12 +63,14 @@ make test-ui   # UI typecheck, lint, and production build
 With the API running:
 
 ```bash
-make smoke-api   # company-enrich ok/partial/missing-perm_ref paths
-make smoke       # extraction smoke (requires API)
-make smoke-ok    # extraction smoke, requires ok/partial
+make smoke-api    # company-enrich ok/partial/missing-perm_ref paths
+make smoke-crm    # crm_ready promote/demote/export stub (requires API)
+make smoke-risk   # deterministic risk_score v2 sanity check (requires API)
+make smoke        # extraction smoke (requires API)
+make smoke-ok     # extraction smoke, requires ok/partial
 ```
 
-`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. It uses only deterministic local providers, so no paid API keys are required.
+`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. `make smoke-crm` and `make smoke-risk` exercise the promotion and risk-score flows. All use deterministic local providers, so no paid API keys are required.
 
 ### Full extraction `ok` path
 
@@ -186,7 +188,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 - **Social top-level status** can be `"ok"` even when every individual handle is `"unknown"` because the runner only degrades the lead if the module itself errors; the UI panel renders per-handle status chips.
 - **Multi-handle duration** can exceed the default HTTP write timeout; operators must raise `HTTP_WRITE_TIMEOUT`.
 - **crm_ready stage** requires explicit promotion via `/api/leads/{id}/promote` once readiness rules pass; the stage machine still stops at `validated` from module runs.
-- **Risk is computed from email + phone only** via `runner.computeRisk()`; `domain_intel` and `social_footprint` do not affect `risk_level` today. `risk_score` is stored if present but is not a composite algorithm field.
+- **Risk is deterministic** via `internal/risk.Compute()` using module results + lead fields; score is 0–100 and bands map to `low`/`medium`/`high`/`unknown`.
 - **Compliance summary** is static governance content (hard rules, risk table, checklist, exclusions). It does not yet return numeric stats or per-run scores.
 - **Async long runs** are not supported; batch runs execute synchronously inside the HTTP request.
 
@@ -195,7 +197,7 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 ## Backlog for v2 and beyond
 
 - `crm_ready` auto-demotion when a re-run invalidates a previously promoted lead.
-- Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
+- Configurable risk weights and per-module fine-tuning.
 - `company-enrich`: fully available (module, control-plane, UI Company tab, CI, smoke runbook).
 - Async worker for long-running Maigret/theHarvester batch jobs.
 - Retention/deletion enforcement in the backend.

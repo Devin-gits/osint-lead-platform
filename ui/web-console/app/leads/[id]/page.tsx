@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink, Download, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
-import { useLead, useRunLeadModules, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead } from "@/lib/api/hooks";
+import { useLead, useRunLeadModules, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead, useLeadRisk } from "@/lib/api/hooks";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -23,6 +23,8 @@ import {
   ModuleName,
   ReadinessCheck,
   ReadinessReport,
+  RiskFactor,
+  RiskReport,
   SocialFootprintResult,
 } from "@/lib/api/types";
 
@@ -61,6 +63,7 @@ export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { data: lead, isLoading, error, refetch } = useLead(id);
   const { data: readiness, isLoading: readinessLoading } = useLeadReadiness(id);
+  const { data: risk, isLoading: riskLoading } = useLeadRisk(id);
   const { data: modules } = useModules();
   const run = useRunLeadModules();
   const promote = usePromoteLead();
@@ -277,6 +280,8 @@ export default function LeadDetailPage() {
         onDemote={handleDemote}
         onExport={handleExport}
       />
+
+      <RiskSection risk={risk} loading={riskLoading} />
 
       <Card>
         <Tabs
@@ -873,6 +878,63 @@ function CompanyResultPanel({ result }: { result: CompanyEnrichResult }) {
       )}
 
       <RawJsonView data={result} />
+    </div>
+  );
+}
+
+function RiskSection({ risk, loading }: { risk?: RiskReport; loading: boolean }) {
+  if (loading) {
+    return (
+      <Card>
+        <h3 className="mb-3 text-sm font-semibold text-foreground">Risk score</h3>
+        <Skeleton className="h-4 w-1/3" />
+      </Card>
+    );
+  }
+
+  const score = risk?.score;
+  const level = risk?.level || "unknown";
+
+  return (
+    <Card>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Risk score</h3>
+          <div className="mt-1 flex items-center gap-3">
+            <span className="text-2xl font-bold text-foreground">{score ?? "—"}</span>
+            <RiskBadge level={level} />
+          </div>
+          {level === "unknown" && (
+            <p className="mt-1 text-xs text-foreground-secondary">No risk signals available yet.</p>
+          )}
+        </div>
+        {risk && risk.factors.length > 0 && (
+          <div className="flex-1">
+            <h4 className="mb-2 text-xs font-semibold text-foreground-secondary">Contributing factors</h4>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {risk.factors.map((factor) => (
+                <RiskFactorRow key={factor.name} factor={factor} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function RiskFactorRow({ factor }: { factor: RiskFactor }) {
+  const positive = factor.points > 0;
+  return (
+    <div className={cn(
+      "flex items-start gap-2 rounded-md border p-2 text-xs",
+      positive ? "border-warning/20 bg-warning/10 text-warning" : "border-success/20 bg-success/10 text-success"
+    )}>
+      <span className="mt-0.5 shrink-0 font-mono">{positive ? "+" : ""}{factor.points}</span>
+      <div>
+        <span className="font-medium capitalize">{factor.name.replace(/_/g, " ")}</span>
+        <p className="text-foreground-secondary">{factor.message}</p>
+      </div>
     </div>
   );
 }

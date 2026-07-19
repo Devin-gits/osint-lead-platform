@@ -18,6 +18,7 @@ import {
   PipelineRun,
   PipelineRunRequest,
   ReadinessReport,
+  RiskReport,
   ExportResponse,
   StageTransitionRequest,
   RunModulesRequest,
@@ -155,6 +156,8 @@ export function useRunLeadModules() {
       queryClient.invalidateQueries({ queryKey: [LEADS_KEY] });
       queryClient.invalidateQueries({ queryKey: [AUDIT_KEY] });
       queryClient.invalidateQueries({ queryKey: [RUNS_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["risk", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["readiness", variables.id] });
     },
   });
 }
@@ -221,6 +224,18 @@ export function useExportLead() {
       const res = await apiGet<ExportResponse>(`/api/leads/${id}/export`);
       return res.data;
     },
+  });
+}
+
+export function useLeadRisk(id?: string) {
+  return useQuery<RiskReport, ApiClientError>({
+    queryKey: ["risk", id],
+    queryFn: async () => {
+      if (!id) throw new ApiClientError("missing_id", "No lead id provided", 400);
+      const res = await apiGet<RiskReport>(`/api/leads/${id}/risk`);
+      return res.data;
+    },
+    enabled: !!id,
   });
 }
 
