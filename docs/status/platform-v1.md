@@ -188,6 +188,6 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 
 - `crm_ready` stage policy and CRM export trigger.
 - Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
-- `company-enrich` wiring and planning.
+- `company-enrich`: Stage 2 plan complete (`docs/decisions/company-enrich-stage-2-plan.md`); implementation blocked until the GO checklist in that plan is approved by a human reviewer.
 - Async worker for long-running Maigret/theHarvester batch jobs.
 - Retention/deletion enforcement in the backend.

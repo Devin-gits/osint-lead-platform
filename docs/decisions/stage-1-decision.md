@@ -80,7 +80,13 @@ Each row aggregates the merged scorecard(s) in [`evaluations/`](../../evaluation
 |---|---|---|
 | [waterfall-gtm](../../evaluations/waterfall-gtm.md) | 2/5 | Reference only |
 
-**Decision:** No library to adopt — waterfall-gtm is a two-commit, single-maintainer demo repo with no releases, hard-wired to paid-only providers (Apollo/Clearbit/ZoomInfo/etc.), and its own evaluation corrected a stale "last updated" date in the original research doc. What's genuinely useful is the **pattern** (an ordered, provider-agnostic `WaterfallProcessor` that stops at first success and short-circuits once required fields are satisfied) — MIT-licensed and safe to reference or selectively copy with attribution. **Next step:** `company-enrich` has no adoptable OSS core at all yet (the research doc's other candidates — discolike-cli, local-enrichment-tool — were never given their own Stage 1 evaluation). Before writing any `modules/company-enrich/` code, get a second-opinion evaluation of **local-enrichment-tool** (the one candidate in the original survey with a plausible free/OSS-first path) — do not build a paid-API-only waterfall as the default, since that contradicts the "cost-conscious" goal the pattern is supposed to serve.
+**Decision (Stage 1):** No library to adopt — waterfall-gtm is a two-commit, single-maintainer demo repo with no releases, hard-wired to paid-only providers (Apollo/Clearbit/ZoomInfo/etc.), and its own evaluation corrected a stale "last updated" date in the original research doc. What's genuinely useful is the **pattern** (an ordered, provider-agnostic `WaterfallProcessor` that stops at first success and short-circuits once required fields are satisfied) — MIT-licensed and safe to reference or selectively copy with attribution.
+
+**Update (Pass 3A, 2026-07-19):** The required second-opinion evaluations of `local-enrichment-tool` and `discolike-cli` are complete:
+- `local-enrichment-tool` is **rejected** (one-day Anthropic/LLM/LinkedIn-scraping demo, not adoptable).
+- `discolike-cli` is **reference / optional paid adapter only** (clean MIT client, but requires paid DiscoLike subscription).
+- A Stage 2 planning brief now exists at `docs/decisions/company-enrich-stage-2-plan.md`.
+- **Status:** planning complete. **Implementation is blocked until the plan is approved** (human gate). Do not write `modules/company-enrich/` code until the GO checklist in the plan is signed off.
 
 ### Risk/breach signal (h8mail) — Reject, no Stage 2 action
 
@@ -101,7 +107,7 @@ Each row aggregates the merged scorecard(s) in [`evaluations/`](../../evaluation
 | `extraction` | **Move to Stage 2** — Crawl4AI primary, Firecrawl secondary | High |
 | Orchestration | **Reject for now** — revisit after 2 modules are built | — |
 | AI-agent glue | **Needs second opinion** — narrow MCP-layer question only | — |
-| `company-enrich` | **Needs second opinion** — evaluate local-enrichment-tool before any build | — |
+| `company-enrich` | **Planning complete** — `local-enrichment-tool` rejected, `discolike-cli` optional adapter, plan in `docs/decisions/company-enrich-stage-2-plan.md`; implementation blocked until approved | — |
 | Risk/breach (h8mail) | **Reject** — no pipeline module exists for this | — |
 
 ## What this unblocks
@@ -114,4 +120,4 @@ Per `CONTRIBUTING.md`'s Stage 2 gate, the following may now open implementation 
 - `modules/social-footprint/`
 - `modules/extraction/`
 
-`modules/company-enrich/` remains blocked pending a second-opinion evaluation of local-enrichment-tool. Orchestration and the AI-agent/MCP layer remain explicitly out of scope until real modules exist to inform those decisions.
+`modules/company-enrich/` now has a completed Stage 2 planning brief (`docs/decisions/company-enrich-stage-2-plan.md`) and is blocked only on human approval of that plan; no code should be written until the GO checklist is signed off. Orchestration and the AI-agent/MCP layer remain explicitly out of scope until real modules exist to inform those decisions.
