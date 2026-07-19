@@ -23,7 +23,11 @@ Per the Stage 2 decision (`docs/decisions/extraction-stage-2-plan.md`):
 
 ```bash
 cd modules/extraction
+python3 -m venv .venv
+source .venv/bin/activate
 make pydeps   # pip install -r requirements.txt (Crawl4AI)
+# Optional: if Crawl4AI cannot launch the browser, install Playwright browsers
+# playwright install chromium
 make build    # go build -o bin/extraction ./cmd/extraction
 ```
 
@@ -32,6 +36,9 @@ Requirements:
 - Go 1.22.5
 - Python 3.10+ (for the Crawl4AI backend)
 - Crawl4AI 0.9.2 (`requirements.txt`)
+- Playwright browsers are sometimes required by Crawl4AI 0.9.2 depending on the
+  crawler configuration. If the wrapper reports a browser/launcher error, run
+  `playwright install chromium` in the same Python environment.
 
 Firecrawl requires only an API key; no Python dependency.
 
@@ -44,6 +51,46 @@ echo '{"url":"https://example.com","permission_ref":"CAMP-2026-Q3-001"}' | ./bin
 
 `permission_ref` is **mandatory**. A missing `permission_ref` produces a
 `skipped` result and a clear audit message.
+
+## End-to-end demo (via control-plane)
+
+From the repository root:
+
+```bash
+cd modules/extraction
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# Only if Crawl4AI complains about a missing browser:
+# playwright install chromium
+cd ../../services/control-plane
+go run ./cmd/server
+```
+
+Then in another terminal:
+
+```bash
+# Create a lead with a public URL and permission reference
+LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com","permission_ref":"DEMO-1"}' | jq -r '.data.id')
+
+# Run extraction
+curl -s -X POST "http://localhost:8080/api/leads/${LEAD}/run" \
+  -H 'Content-Type: application/json' \
+  -d '{"modules":["extraction"]}' | jq '.data.extraction | {status, source_tool, confidence, fields}'
+
+# Check the audit event
+curl -s "http://localhost:8080/api/leads/${LEAD}" | jq '.data.audit_events[0] | {module, status, legal_basis, subject}'
+```
+
+Expected results:
+
+- If Crawl4AI is installed and the page loads: `status: "ok"` with extracted fields.
+- If Crawl4AI is not installed: `status: "error"` with a structured message such
+  as `crawl4ai is not installed`. This is an honest API result, not a failure of
+  the control-plane.
+- If `permission_ref` is missing: `status: "skipped"` with `reason: "missing permission_ref"`.
 
 ## I/O contract
 

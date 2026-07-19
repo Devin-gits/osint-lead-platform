@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Tabs } from "@/components/ui/Tabs";
 import { AuditLogPanel } from "@/components/ui/AuditLogPanel";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { StatusChip } from "@/components/ui/StatusChip";
+import { StatusChip, type StatusChipStatus } from "@/components/ui/StatusChip";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -30,6 +30,22 @@ const moduleOrder: { key: string; label: string; module: ModuleName }[] = [
   { key: "social_footprint", label: "Social", module: "social-footprint" },
   { key: "extraction", label: "Extraction", module: "extraction" },
 ];
+
+type ModuleInfoLike = { dev_status?: string } | undefined;
+
+function moduleRunState(
+  module: ModuleName,
+  mod: ModuleInfoLike,
+  lead?: { url?: string; permission_ref?: string }
+): { canRun: boolean; disabledReason: string | null } {
+  const isWired = mod?.dev_status === "available";
+  if (!isWired) return { canRun: false, disabledReason: "not wired" };
+  if (module === "extraction") {
+    if (!lead?.url) return { canRun: false, disabledReason: "needs url" };
+    if (!lead?.permission_ref) return { canRun: false, disabledReason: "needs permission ref" };
+  }
+  return { canRun: true, disabledReason: null };
+}
 
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -150,22 +166,14 @@ export default function LeadDetailPage() {
           <div className="space-y-2">
             {moduleOrder.map(({ label, module }) => {
               const mod = modules?.find((m) => m.name === module);
-              const isWired = mod?.dev_status === "available";
-              const needsUrl = module === "extraction";
-              const disabledReason = !isWired
-                ? "not wired"
-                : needsUrl && !lead.url
-                ? "needs url"
-                : needsUrl && !lead.permission_ref
-                ? "needs permission ref"
-                : null;
+              const { canRun, disabledReason } = moduleRunState(module, mod, lead);
               return (
                 <Button
                   key={module}
                   size="sm"
                   variant="secondary"
                   className="w-full justify-between"
-                  disabled={!isWired || running !== null || run.isPending || !!disabledReason}
+                  disabled={!canRun || running !== null || run.isPending}
                   onClick={() => handleRun(module)}
                 >
                   <span className="flex items-center gap-2">
@@ -188,6 +196,8 @@ export default function LeadDetailPage() {
           defaultTab="email_validate"
           tabs={moduleOrder.map(({ key, label, module }) => {
             const result = ((lead as unknown) as Record<string, unknown>)[key] as Record<string, unknown> | undefined;
+            const mod = modules?.find((m) => m.name === module);
+            const { canRun, disabledReason } = moduleRunState(module, mod, lead);
             return {
               id: key,
               label: `${label} ${result ? `(${result.status || "n/a"})` : ""}`,
@@ -197,6 +207,8 @@ export default function LeadDetailPage() {
                   result={result}
                   onRun={() => handleRun(module)}
                   isRunning={running === module}
+                  canRun={canRun}
+                  disabledReason={disabledReason}
                 />
               ),
             };
@@ -238,22 +250,38 @@ function ModuleResultPanel({
   result,
   onRun,
   isRunning,
+  canRun,
+  disabledReason,
 }: {
   module: ModuleName;
   result?: Record<string, unknown>;
   onRun: () => void;
   isRunning: boolean;
+  canRun: boolean;
+  disabledReason: string | null;
 }) {
   const status = (result?.status as string) || "not_run";
+  const runLabel = module === "extraction" ? "Run extraction" : "Run anyway";
+
+  const RunButton = (
+    <Button size="sm" variant="ghost" onClick={onRun} disabled={isRunning || !canRun}>
+      {isRunning ? "Running…" : runLabel}
+    </Button>
+  );
 
   if (!result) {
     return (
-      <EmptyState
-        icon={AlertCircle}
-        title="Not run yet"
-        description={`Run ${module} to see results.`}
-        className="py-8"
-      />
+      <div className="space-y-4 py-8">
+        <EmptyState
+          icon={AlertCircle}
+          title="Not run yet"
+          description={`Run ${module} to see results.`}
+        />
+        {disabledReason && (
+          <p className="text-xs text-warning">{disabledReason}</p>
+        )}
+        {module !== "email-validate" && module !== "phone-validate" && RunButton}
+      </div>
     );
   }
 
@@ -265,9 +293,12 @@ function ModuleResultPanel({
           {(result.reason as string) || "This module did not run."}
         </p>
         {module !== "email-validate" && module !== "phone-validate" && (
-          <Button size="sm" variant="ghost" onClick={onRun} disabled={isRunning}>
-            {isRunning ? "Running…" : "Run anyway"}
-          </Button>
+          <>
+            {RunButton}
+            {disabledReason && (
+              <p className="text-xs text-warning">{disabledReason}</p>
+            )}
+          </>
         )}
       </div>
     );
@@ -276,11 +307,11 @@ function ModuleResultPanel({
   return (
     <div className="space-y-4 py-4">
       <div className="flex items-center justify-between">
-        <StatusChip status={status as "ok" | "unknown" | "skipped" | "pending" | "not_run"} />
+        <StatusChip status={status as StatusChipStatus} />
         {module !== "email-validate" && module !== "phone-validate" && (
-          <Button size="sm" variant="ghost" onClick={onRun} disabled={isRunning}>
-            {isRunning ? "Running…" : "Run anyway"}
-          </Button>
+          <>
+            {RunButton}
+          </>
         )}
       </div>
 
@@ -487,12 +518,19 @@ function RecordList({ label, items }: { label: string; items: string[] }) {
 function ExtractionResultPanel({ result }: { result: ExtractionResult }) {
   const fields = result.fields;
   const provenance = result.provenance ?? [];
+  const [rawOpen, setRawOpen] = useState(false);
+
+  const showConfidence = result.status === "ok" || result.status === "partial";
+  const confidenceValue =
+    showConfidence && result.confidence !== undefined && result.confidence !== null
+      ? `${Math.round(result.confidence * 100)}%`
+      : "—";
 
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <ResultCard label="Source tool" value={result.source_tool || "—"} />
-        <ResultCard label="Confidence" value={`${Math.round((result.confidence ?? 0) * 100)}%`} />
+        <ResultCard label="Confidence" value={confidenceValue} />
         <ResultCard label="HTTP status" value={result.metadata?.http_status ?? "—"} />
         <ResultCard label="Final URL" value={result.final_url || result.url || "—"} />
       </div>
@@ -554,10 +592,20 @@ function ExtractionResultPanel({ result }: { result: ExtractionResult }) {
 
       {result.raw_markdown && (
         <div className="rounded-md border border-border bg-surface p-4">
-          <h4 className="mb-2 text-sm font-medium text-foreground">Raw markdown</h4>
-          <pre className="max-h-64 overflow-auto rounded-md bg-surface-elevated p-3 text-xs text-foreground-secondary">
-            {result.raw_markdown.length > 10000 ? result.raw_markdown.slice(0, 10000) + "\n… truncated in UI" : result.raw_markdown}
-          </pre>
+          <button
+            onClick={() => setRawOpen((v) => !v)}
+            className="flex w-full items-center justify-between text-sm font-medium text-foreground"
+          >
+            <span>Raw markdown</span>
+            <span className="text-xs text-foreground-secondary">{rawOpen ? "−" : "+"}</span>
+          </button>
+          {rawOpen && (
+            <pre className="mt-3 max-h-96 overflow-auto rounded-md bg-surface-elevated p-3 text-xs text-foreground-secondary">
+              {result.raw_markdown.length > 10000
+                ? result.raw_markdown.slice(0, 10000) + "\n… truncated in UI"
+                : result.raw_markdown}
+            </pre>
+          )}
         </div>
       )}
 
