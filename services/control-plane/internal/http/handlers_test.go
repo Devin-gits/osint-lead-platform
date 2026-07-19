@@ -176,6 +176,66 @@ func TestServer_PipelineRun(t *testing.T) {
 	}
 }
 
+func TestServer_RiskEndpoint(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	body := []byte(`{"email":"support@example.com","company":"Example","domain":"example.com","permission_ref":"p-001"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/leads", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	var createResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	id := createResp.Data.(map[string]any)["id"].(string)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/risk", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var riskResp response
+	if err := json.Unmarshal(rr.Body.Bytes(), &riskResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	report := riskResp.Data.(map[string]any)
+	if report["level"] != "low" {
+		t.Fatalf("expected level low before validation (unvalidated contact), got %v", report["level"])
+	}
+	if report["score"] == nil {
+		t.Fatalf("expected non-nil risk score")
+	}
+
+	// Run email validate and company enrich, then risk should be low.
+	body = []byte(`{"modules":["email-validate","company-enrich"]}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/leads/"+id+"/run", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/leads/"+id+"/risk", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &riskResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	report = riskResp.Data.(map[string]any)
+	if report["level"] != "low" {
+		t.Fatalf("expected level low after validation, got %v", report["level"])
+	}
+	if report["score"] == nil {
+		t.Fatalf("expected non-nil risk score")
+	}
+}
+
 // Ensure unused imports are actually used.
 var _ = context.Background
 var _ = util.NewID

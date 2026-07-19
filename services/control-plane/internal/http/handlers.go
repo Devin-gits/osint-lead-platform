@@ -11,6 +11,7 @@ import (
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/readiness"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/risk"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
@@ -491,6 +492,23 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response{Data: resp})
+}
+
+func (s *Server) handleRisk(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing lead id")
+		return
+	}
+
+	lead, err := s.store.GetLead(r.Context(), id)
+	if err != nil {
+		mapStoreError(w, err)
+		return
+	}
+
+	report := risk.Compute(lead)
+	writeJSON(w, http.StatusOK, response{Data: report})
 }
 
 // helpers.

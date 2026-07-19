@@ -94,6 +94,14 @@ make smoke-crm
 ./scripts/smoke-crm-ready.sh
 ```
 
+### Risk-score v2 smoke
+
+```bash
+make smoke-risk
+# or
+./scripts/smoke-risk.sh
+```
+
 Expected output:
 
 ```text
@@ -109,6 +117,23 @@ Expected output:
 { "format": "crm_stub_v1", ... }
 ==> demoting lead to validated
 ==> smoke-crm-ready passed
+```
+
+Risk-score expected output:
+
+```text
+==> Smoke target: http://localhost:8080
+==> no-signal lead <id>
+==> no-signal risk level: unknown
+==> lead <id>
+==> risk before validation (expect low with unvalidated-contact score)
+before: low 10
+==> running email-validate and company-enrich
+==> risk after validation (expect low numeric score)
+after: low <score>
+==> factors present
+>=2
+==> smoke-risk passed
 ```
 
 ## 5. Manual UI checks
@@ -140,7 +165,11 @@ Expected output:
    - Click **Export stub** → a JSON file downloads with `format: crm_stub_v1`.
    - Click **Demote** → stage returns to `validated` and **Export stub** becomes
      unavailable.
-9. The `EnvironmentBanner` at the top should say `Live API` when the
+9. Risk score:
+   - Open a lead with no modules run → risk card shows `—` with `unknown` badge.
+   - Run **Email validate** and **Company enrich** → risk card shows `low` and a
+     numeric score; expanding factors shows `contact_validated` and `company_context_ok`.
+10. The `EnvironmentBanner` at the top should say `Live API` when the
    control-plane is reachable; it should never say `mock data`.
 
 ## Expected behaviour notes

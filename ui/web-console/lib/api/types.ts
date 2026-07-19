@@ -310,6 +310,18 @@ export interface ReadinessReport {
   checks: ReadinessCheck[];
 }
 
+export interface RiskFactor {
+  name: string;
+  points: number;
+  message: string;
+}
+
+export interface RiskReport {
+  score?: number;
+  level: RiskLevel;
+  factors: RiskFactor[];
+}
+
 export interface ExportResponse {
   format: "crm_stub_v1";
   exported_at: string;

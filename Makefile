@@ -3,7 +3,7 @@
 # The control-plane and UI are started in separate terminals by design.
 # Set EXTRACTION_CRAWL4AI_PYTHON to a venv Python for the full extraction ok path.
 
-.PHONY: help demo-api demo-ui smoke smoke-ok smoke-platform smoke-api smoke-crm install-extraction-venv test-go test-ui
+.PHONY: help demo-api demo-ui smoke smoke-ok smoke-platform smoke-api smoke-crm smoke-risk install-extraction-venv test-go test-ui
 
 help:
 	@echo "Available targets:"
@@ -17,6 +17,7 @@ help:
 	@echo "  make smoke-platform      - run extraction + email-validate smoke (API must be up)"
 	@echo "  make smoke-api           - run operator smoke against localhost:8080 (API must be up)"
 	@echo "  make smoke-crm           - run crm_ready promote/export smoke (API must be up)"
+	@echo "  make smoke-risk          - run deterministic risk_score v2 smoke (API must be up)"
 	@echo "  make install-extraction-venv - create modules/extraction/.venv with Crawl4AI"
 
 demo-api:
@@ -73,3 +74,6 @@ smoke-api:
 
 smoke-crm:
 	@./scripts/smoke-crm-ready.sh
+
+smoke-risk:
+	@./scripts/smoke-risk.sh

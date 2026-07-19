@@ -373,6 +373,18 @@ export interface ReadinessReport {
   checks: ReadinessCheck[];
 }
 
+export interface RiskFactor {
+  name: string;
+  points: number;
+  message: string;
+}
+
+export interface RiskReport {
+  score?: number;
+  level: RiskLevel;
+  factors: RiskFactor[];
+}
+
 export interface ExportResponse {
   format: "crm_stub_v1";
   exported_at: string;
@@ -636,6 +648,29 @@ Manual demotion to an allow-listed earlier stage.
 Valid targets: `raw`, `enriched`, `validated`.
 
 **Response `200`** — returns the updated `LeadRecord`.
+
+### `GET /api/leads/{id}/risk`
+
+Idempotent risk report. Computes a deterministic `risk_score` (0–100) and
+`risk_level` from the lead's module results and fields.
+
+**Response `200`**
+
+```json
+{
+  "data": {
+    "score": 0,
+    "level": "low",
+    "factors": [
+      { "name": "contact_validated", "points": -10, "message": "required contact channel validated" },
+      { "name": "company_context_ok", "points": -5, "message": "company_enrich or extraction completed successfully" }
+    ]
+  }
+}
+```
+
+`score` is `0` and `level` is `"unknown"` when no risk signals are available
+(no contact fields and no module results).
 
 ### `GET /api/leads/{id}/export`
 

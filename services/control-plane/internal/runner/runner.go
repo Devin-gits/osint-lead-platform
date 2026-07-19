@@ -18,6 +18,7 @@ import (
 	socialfootprint "github.com/Moyeil-73/osint-lead-platform/modules/social-footprint"
 
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/models"
+	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/risk"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/store"
 	"github.com/Moyeil-73/osint-lead-platform/services/control-plane/internal/util"
 )
@@ -242,7 +243,9 @@ func (r *Runner) runModulesOnLead(ctx context.Context, lead models.Lead, modules
 	}
 
 	lead.Stage = computeStage(lead.Stage, executed, moduleStatuses)
-	lead.RiskLevel = computeRisk(lead.Results)
+	riskReport := risk.Compute(lead)
+	lead.RiskLevel = riskReport.Level
+	lead.RiskScore = riskReport.Score
 	_ = moduleStatuses
 	return lead, auditEvents, nil
 }
@@ -630,59 +633,6 @@ func computeStage(current string, executed []string, statuses map[string]string)
 		}
 	}
 	return models.StageRaw
-}
-
-func computeRisk(results map[string]any) string {
-	priority := map[string]int{models.RiskUnknown: 0, models.RiskLow: 1, models.RiskMedium: 2, models.RiskHigh: 3}
-	max := models.RiskUnknown
-	maxP := priority[max]
-
-	if email, ok := results["email_validate"].(map[string]any); ok {
-		if r := emailRisk(email); priority[r] > maxP {
-			max = r
-			maxP = priority[r]
-		}
-	}
-	if phone, ok := results["phone_validate"].(map[string]any); ok {
-		if r := phoneRisk(phone); priority[r] > maxP {
-			max = r
-			maxP = priority[r]
-		}
-	}
-
-	return max
-}
-
-func emailRisk(email map[string]any) string {
-	status, _ := email["status"].(string)
-	if status != "ok" {
-		return models.RiskMedium
-	}
-	syntax, _ := email["syntax_valid"].(bool)
-	hasMX, _ := email["has_mx_records"].(bool)
-	if syntax && hasMX {
-		return models.RiskLow
-	}
-	if syntax {
-		return models.RiskMedium
-	}
-	return models.RiskHigh
-}
-
-func phoneRisk(phone map[string]any) string {
-	status, _ := phone["status"].(string)
-	if status != "ok" {
-		return models.RiskMedium
-	}
-	valid, _ := phone["is_valid_number"].(bool)
-	if valid {
-		return models.RiskLow
-	}
-	format, _ := phone["format_valid"].(bool)
-	if format {
-		return models.RiskMedium
-	}
-	return models.RiskHigh
 }
 
 func moduleResultStatus(result any) string {
