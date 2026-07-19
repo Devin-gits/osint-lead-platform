@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle } from "lucide-react";
+import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { useLead, useRunLeadModules, useModules } from "@/lib/api/hooks";
 import { useToast } from "@/components/providers/ToastProvider";
@@ -17,6 +17,7 @@ import { StatusChip, type StatusChipStatus } from "@/components/ui/StatusChip";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils/cn";
 import {
+  CompanyEnrichResult,
   DomainIntelResult,
   ExtractionResult,
   ModuleName,
@@ -29,6 +30,7 @@ const moduleOrder: { key: string; label: string; module: ModuleName }[] = [
   { key: "domain_intel", label: "Domain", module: "domain-intel" },
   { key: "social_footprint", label: "Social", module: "social-footprint" },
   { key: "extraction", label: "Extraction", module: "extraction" },
+  { key: "company_enrich", label: "Company", module: "company-enrich" },
 ];
 
 type ModuleInfoLike = { dev_status?: string } | undefined;
@@ -36,13 +38,19 @@ type ModuleInfoLike = { dev_status?: string } | undefined;
 function moduleRunState(
   module: ModuleName,
   mod: ModuleInfoLike,
-  lead?: { url?: string; permission_ref?: string }
+  lead?: { url?: string; company?: string; domain?: string; permission_ref?: string }
 ): { canRun: boolean; disabledReason: string | null } {
   const isWired = mod?.dev_status === "available";
   if (!isWired) return { canRun: false, disabledReason: "not wired" };
   if (module === "extraction") {
     if (!lead?.url) return { canRun: false, disabledReason: "needs url" };
     if (!lead?.permission_ref) return { canRun: false, disabledReason: "needs permission ref" };
+  }
+  if (module === "company-enrich") {
+    if (!lead?.permission_ref) return { canRun: false, disabledReason: "needs permission ref" };
+    if (!lead?.domain && !lead?.company && !lead?.url) {
+      return { canRun: false, disabledReason: "needs domain, company, or url" };
+    }
   }
   return { canRun: true, disabledReason: null };
 }
@@ -68,7 +76,8 @@ export default function LeadDetailPage() {
       const resultKey = module.replace(/-/g, "_");
       const result = ((updated as unknown) as Record<string, unknown>)[resultKey] as { status?: string } | undefined;
       const status = result?.status || "unknown";
-      const variant = status === "ok" ? "success" : status === "skipped" ? "warning" : "danger";
+      const variant =
+        status === "ok" ? "success" : status === "skipped" || status === "partial" ? "warning" : "danger";
       addToast(`${module} finished with status: ${status}`, variant);
       refetch();
     } catch (err) {
@@ -161,6 +170,12 @@ export default function LeadDetailPage() {
             <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>No URL — extraction requires a public URL.</span>
+            </div>
+          )}
+          {!lead.domain && !lead.company && !lead.url && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-warning/20 bg-warning/10 p-2 text-xs text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>No domain, company, or URL — company enrichment needs one of them.</span>
             </div>
           )}
           <div className="space-y-2">
@@ -261,7 +276,10 @@ function ModuleResultPanel({
   disabledReason: string | null;
 }) {
   const status = (result?.status as string) || "not_run";
-  const runLabel = module === "extraction" ? "Run extraction" : "Run anyway";
+  const runLabel =
+    module === "extraction" ? "Run extraction" :
+    module === "company-enrich" ? "Run company enrich" :
+    "Run anyway";
 
   const RunButton = (
     <Button size="sm" variant="ghost" onClick={onRun} disabled={isRunning || !canRun}>
@@ -321,6 +339,8 @@ function ModuleResultPanel({
         <SocialResultPanel result={result as unknown as SocialFootprintResult} />
       ) : module === "extraction" ? (
         <ExtractionResultPanel result={result as unknown as ExtractionResult} />
+      ) : module === "company-enrich" ? (
+        <CompanyResultPanel result={result as unknown as CompanyEnrichResult} />
       ) : (
         <GenericResultGrid result={result} />
       )}
@@ -606,6 +626,177 @@ function ExtractionResultPanel({ result }: { result: ExtractionResult }) {
                 : result.raw_markdown}
             </pre>
           )}
+        </div>
+      )}
+
+      <RawJsonView data={result} />
+    </div>
+  );
+}
+
+function CompanyResultPanel({ result }: { result: CompanyEnrichResult }) {
+  const fields = result.fields;
+  const hq = fields?.headquarters ?? undefined;
+  const showConfidence = result.status === "ok" || result.status === "partial";
+  const confidenceValue =
+    showConfidence && result.confidence !== undefined && result.confidence !== null
+      ? `${Math.round(result.confidence * 100)}%`
+      : "—";
+  const limitsApplied =
+    typeof result.metadata?.limits_applied === "string"
+      ? result.metadata.limits_applied
+      : Array.isArray(result.metadata?.limits_applied)
+        ? result.metadata?.limits_applied.join(", ")
+        : undefined;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <ResultCard label="Source tool" value={result.source_tool || "—"} />
+        <ResultCard label="Confidence" value={confidenceValue} />
+        {result.metadata?.duration_ms !== undefined && (
+          <ResultCard label="Duration" value={`${result.metadata.duration_ms} ms`} />
+        )}
+        <ResultCard label="Checked at" value={result.checked_at ? new Date(result.checked_at).toLocaleString() : "—"} />
+      </div>
+
+      {result.error && (
+        <div className="rounded-md border border-danger/20 bg-danger/10 p-3 text-sm text-danger">
+          {result.error}
+        </div>
+      )}
+      {result.reason && (
+        <div className="rounded-md border border-warning/20 bg-warning/10 p-3 text-sm text-warning">
+          {result.reason}
+        </div>
+      )}
+
+      {fields && (
+        <div className="space-y-4">
+          <div className="rounded-md border border-border bg-surface p-4">
+            <h4 className="mb-2 text-sm font-medium text-foreground">Identity</h4>
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              {fields.name !== undefined && fields.name !== "" && (
+                <ResultCard label="Name" value={fields.name} />
+              )}
+              {fields.legal_name && <ResultCard label="Legal name" value={fields.legal_name} />}
+              {fields.domain && <ResultCard label="Domain" value={fields.domain} />}
+              {fields.website && (
+                <ResultCard
+                  label="Website"
+                  value={
+                    <a
+                      href={fields.website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      {fields.website}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  }
+                />
+              )}
+            </div>
+            {fields.name === undefined || fields.name === "" ? (
+              <p className="mt-2 text-xs text-foreground-muted">
+                Company name could not be derived from this input.
+              </p>
+            ) : null}
+          </div>
+
+          {fields.description && (
+            <div className="rounded-md border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium text-foreground">Description</h4>
+              <p className="text-sm text-foreground">{fields.description}</p>
+            </div>
+          )}
+
+          <div className="rounded-md border border-border bg-surface p-4">
+            <h4 className="mb-2 text-sm font-medium text-foreground">Size &amp; maturity</h4>
+            <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              {fields.employee_count !== undefined && fields.employee_count !== null && (
+                <ResultCard label="Employee count" value={fields.employee_count} />
+              )}
+              {fields.employee_count_range && (
+                <ResultCard label="Employee range" value={fields.employee_count_range} />
+              )}
+              {fields.founded !== undefined && fields.founded !== null && (
+                <ResultCard label="Founded" value={fields.founded} />
+              )}
+            </div>
+          </div>
+
+          {hq && (hq.city || hq.state || hq.country || hq.address) && (
+            <div className="rounded-md border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium text-foreground">Headquarters</h4>
+              <div className="grid gap-2 text-sm sm:grid-cols-2">
+                {hq.city && <ResultCard label="City" value={hq.city} />}
+                {hq.state && <ResultCard label="State" value={hq.state} />}
+                {hq.country && <ResultCard label="Country" value={hq.country} />}
+                {hq.address && <ResultCard label="Address" value={hq.address} />}
+              </div>
+            </div>
+          )}
+
+          {(fields.industry && fields.industry.length > 0) || (fields.tech_stack && fields.tech_stack.length > 0) ? (
+            <div className="rounded-md border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium text-foreground">Classification</h4>
+              {fields.industry && fields.industry.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {fields.industry.map((industry) => (
+                    <Badge key={industry} variant="outline" className="text-xs">{industry}</Badge>
+                  ))}
+                </div>
+              )}
+              {fields.tech_stack && fields.tech_stack.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {fields.tech_stack.map((tech) => (
+                    <Badge key={tech} variant="muted" className="text-xs">{tech}</Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {fields.social_links && Object.keys(fields.social_links).length > 0 && (
+            <div className="rounded-md border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium text-foreground">Social links</h4>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(fields.social_links).map(([platform, url]) => (
+                  <a
+                    key={platform}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs text-foreground hover:bg-surface"
+                  >
+                    {platform}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {fields.sources && fields.sources.length > 0 && (
+            <div className="rounded-md border border-border bg-surface p-4">
+              <h4 className="mb-2 text-sm font-medium text-foreground">Sources</h4>
+              <RecordList label="" items={fields.sources} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {result.metadata && (
+        <div className="rounded-md border border-border bg-surface p-4">
+          <h4 className="mb-2 text-sm font-medium text-foreground">Metadata</h4>
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            {result.metadata.backend && <ResultCard label="Backend" value={result.metadata.backend} />}
+            {result.metadata.legal_basis && <ResultCard label="Legal basis" value={result.metadata.legal_basis} />}
+            {result.metadata.permission_ref && <ResultCard label="Permission ref" value={result.metadata.permission_ref} />}
+            {limitsApplied && <ResultCard label="Limits applied" value={limitsApplied} />}
+          </div>
         </div>
       )}
 

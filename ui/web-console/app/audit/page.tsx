@@ -26,6 +26,7 @@ const moduleOptions = [
   { value: "domain-intel", label: "domain-intel" },
   { value: "social-footprint", label: "social-footprint" },
   { value: "extraction", label: "extraction" },
+  { value: "company-enrich", label: "company-enrich" },
   { value: "pipeline", label: "pipeline" },
 ];
 
