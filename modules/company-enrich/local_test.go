@@ -32,7 +32,7 @@ func TestLocalProviderExtractionOnly(t *testing.T) {
 	}
 }
 
-func TestLocalProviderFallsBackToHumanizedDomain(t *testing.T) {
+func TestLocalProviderDomainOnlyPartial(t *testing.T) {
 	lp := newLocalProvider()
 	lp.lookupGitHub = noGitHubLookup
 
@@ -43,11 +43,11 @@ func TestLocalProviderFallsBackToHumanizedDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Status != "ok" {
-		t.Errorf("status = %q, want ok", res.Status)
+	if res.Status != "partial" {
+		t.Errorf("status = %q, want partial", res.Status)
 	}
-	if res.Fields.Name != "Stripe" {
-		t.Errorf("name = %q, want Stripe", res.Fields.Name)
+	if res.Fields.Name != "" {
+		t.Errorf("name should be empty for domain-only, got %q", res.Fields.Name)
 	}
 	if res.Fields.Website != "https://stripe.com" {
 		t.Errorf("website = %q", res.Fields.Website)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	companyenrich "github.com/Moyeil-73/osint-lead-platform/modules/company-enrich"
 	domainintel "github.com/Moyeil-73/osint-lead-platform/modules/domain-intel"
 	emailvalidate "github.com/Moyeil-73/osint-lead-platform/modules/email-validate"
 	extraction "github.com/Moyeil-73/osint-lead-platform/modules/extraction"
@@ -35,6 +36,7 @@ type Runner struct {
 	domainVal *domainintel.Analyzer
 	socialVal *socialfootprint.Validator
 	extractor extractionRunner
+	enricher  *companyenrich.Enricher
 }
 
 // New builds a Runner backed by the supplied Store.
@@ -59,6 +61,7 @@ func New(s store.Store, timeout time.Duration) *Runner {
 		domainVal: domainintel.NewAnalyzer(domainTimeout),
 		socialVal: socialfootprint.NewValidator(0, 0),
 		extractor: extraction.NewExtractor(timeout, 0, ""),
+		enricher:  companyenrich.NewEnricher(timeout, 0),
 	}
 }
 
@@ -391,9 +394,12 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 	case models.ModuleExtraction:
 		return r.runExtraction(ctx, lead, runID, legalBasis, permissionRef)
 
+	case models.ModuleCompanyEnrich:
+		return r.runCompanyEnrich(ctx, lead, runID, legalBasis, permissionRef)
+
 	default:
-		// company-enrich and any unknown module: stub.
-		raw, _ := json.Marshal(map[string]string{"reason": "not wired in control-plane v1"})
+		// Unknown module: stub.
+		raw, _ := json.Marshal(map[string]string{"reason": "unknown module"})
 		event := models.AuditEvent{
 			ID:            util.NewID(),
 			LeadID:        lead.ID,
@@ -408,7 +414,7 @@ func (r *Runner) runModule(ctx context.Context, lead models.Lead, name, runID, l
 		}
 		return models.ModuleResult{Key: strings.ReplaceAll(name, "-", "_"), Result: map[string]any{
 			"status": "skipped",
-			"reason": "not wired in control-plane v1",
+			"reason": "unknown module",
 		}, AuditEvents: []models.AuditEvent{event}}, nil
 	}
 }
@@ -476,6 +482,102 @@ func (r *Runner) runExtraction(ctx context.Context, lead models.Lead, runID, leg
 	}
 
 	return models.ModuleResult{Key: "extraction", Result: m, AuditEvents: []models.AuditEvent{event}}, nil
+}
+
+func (r *Runner) runCompanyEnrich(ctx context.Context, lead models.Lead, runID, legalBasis, permissionRef string) (models.ModuleResult, error) {
+	checkedAt := time.Now().UTC()
+
+	if permissionRef == "" {
+		res := map[string]any{"status": "skipped", "reason": "missing permission_ref"}
+		raw, _ := json.Marshal(map[string]string{"reason": "missing permission_ref"})
+		event := models.AuditEvent{
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        models.ModuleCompanyEnrich,
+			Tool:          "control-plane",
+			CheckedAt:     checkedAt,
+			Status:        "skipped",
+			LegalBasis:    legalBasis,
+			Subject:       models.Subject{Domain: lead.Domain},
+			RawStderrJSON: string(raw),
+		}
+		return models.ModuleResult{Key: "company_enrich", Result: res, AuditEvents: []models.AuditEvent{event}}, nil
+	}
+
+	in := companyenrich.Input{
+		Domain:        lead.Domain,
+		Company:       lead.Company,
+		URL:           lead.URL,
+		PermissionRef: permissionRef,
+		SourceID:      lead.SourceID,
+	}
+	if raw, ok := lead.Results["extraction"]; ok {
+		in.Extraction = mapToExtractionInput(raw)
+	}
+	if raw, ok := lead.Results["domain_intel"]; ok {
+		in.DomainIntel = mapToDomainIntelInput(raw)
+	}
+
+	res, audits := r.enricher.Enrich(ctx, in)
+
+	events := make([]models.AuditEvent, 0, len(audits))
+	for _, a := range audits {
+		auditRaw, _ := json.Marshal(a)
+		auditTime, _ := time.Parse(time.RFC3339, a.Timestamp)
+		if auditTime.IsZero() {
+			auditTime = checkedAt
+		}
+
+		subject := models.Subject{Domain: a.Subject.Domain}
+		if subject.Domain == "" {
+			subject.Domain = lead.Domain
+		}
+
+		events = append(events, models.AuditEvent{
+			ID:            util.NewID(),
+			LeadID:        lead.ID,
+			RunID:         &runID,
+			Module:        models.ModuleCompanyEnrich,
+			Tool:          a.Tool,
+			CheckedAt:     auditTime,
+			Status:        a.Status,
+			LegalBasis:    a.LegalBasis,
+			Subject:       subject,
+			RawStderrJSON: string(auditRaw),
+		})
+	}
+
+	m, err := resultToMap(res)
+	if err != nil {
+		return models.ModuleResult{}, fmt.Errorf("convert company-enrich result: %w", err)
+	}
+
+	return models.ModuleResult{Key: "company_enrich", Result: m, AuditEvents: events}, nil
+}
+
+func mapToExtractionInput(raw any) *companyenrich.ExtractionInput {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var in companyenrich.ExtractionInput
+	if err := json.Unmarshal(b, &in); err != nil {
+		return nil
+	}
+	return &in
+}
+
+func mapToDomainIntelInput(raw any) *companyenrich.DomainIntelInput {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var in companyenrich.DomainIntelInput
+	if err := json.Unmarshal(b, &in); err != nil {
+		return nil
+	}
+	return &in
 }
 
 func (r *Runner) finaliseRun(ctx context.Context, run models.PipelineRun, events []models.AuditEvent, runErr error) {

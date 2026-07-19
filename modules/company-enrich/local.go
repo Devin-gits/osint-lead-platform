@@ -112,9 +112,6 @@ func (p *localProvider) Enrich(ctx context.Context, in Input, merged Fields) (Pr
 	if out.Website == "" && out.Domain != "" {
 		out.Website = "https://" + out.Domain
 	}
-	if out.Name == "" && out.Domain != "" {
-		out.Name = humanizeDomain(out.Domain)
-	}
 	if out.SocialLinks == nil {
 		out.SocialLinks = map[string]string{}
 	}

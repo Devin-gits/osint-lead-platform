@@ -3,6 +3,7 @@ module github.com/Moyeil-73/osint-lead-platform/services/control-plane
 go 1.22.5
 
 require (
+	github.com/Moyeil-73/osint-lead-platform/modules/company-enrich v0.0.0-00010101000000-000000000000
 	github.com/Moyeil-73/osint-lead-platform/modules/domain-intel v0.0.0-00010101000000-000000000000
 	github.com/Moyeil-73/osint-lead-platform/modules/email-validate v0.0.0
 	github.com/Moyeil-73/osint-lead-platform/modules/extraction v0.0.0
@@ -28,6 +29,7 @@ require (
 )
 
 replace (
+	github.com/Moyeil-73/osint-lead-platform/modules/company-enrich => ../../modules/company-enrich
 	github.com/Moyeil-73/osint-lead-platform/modules/domain-intel => ../../modules/domain-intel
 	github.com/Moyeil-73/osint-lead-platform/modules/email-validate => ../../modules/email-validate
 	github.com/Moyeil-73/osint-lead-platform/modules/extraction => ../../modules/extraction

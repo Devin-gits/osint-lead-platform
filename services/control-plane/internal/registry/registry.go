@@ -79,12 +79,12 @@ func New() *Registry {
 			Name:          models.ModuleCompanyEnrich,
 			DisplayName:   "Company Enrichment",
 			Category:      "enrich",
-			DevStatus:     "planned",
+			DevStatus:     "available",
 			NamespacedKey: "company_enrich",
-			BackingTools:  []string{},
-			Description:   "Enrich company context from public business registries and datasets.",
-			MinInputField: "company",
-			RiskLevelNote: "Low: public business context only.",
+			BackingTools:  []string{"company-enrich/local (deterministic)", "discolike (optional paid adapter)"},
+			Description:   "Enrich company firmographics from deterministic public sources and optional paid B2B data adapters. Requires at least domain, company, or url. Optional DISCOLIKE_API_KEY for paid adapter.",
+			MinInputField: "domain",
+			RiskLevelNote: "Low-Medium: company-level data only; paid adapters require API key and are optional.",
 		},
 	}
 
@@ -105,7 +105,9 @@ func New() *Registry {
 		models.ModuleExtraction: "Fetches one permissioned public URL per lead and extracts low-risk business contact/identity signals. " +
 			"Requires `url` and `permission_ref`. Default backend is Crawl4AI (local Python subprocess); Firecrawl is optional via `EXTRACTION_BACKEND=firecrawl` and `FIRECRAWL_API_KEY`. " +
 			"SSRF controls block private/link-local/metadata IPs, non-standard ports, and credentialed URLs. Raw markdown is capped at 100 KB and not written to audit logs.",
-		models.ModuleCompanyEnrich: "Planned for a future PR.",
+		models.ModuleCompanyEnrich: "Enriches company firmographics. Requires at least `domain`, `company`, or `url` plus `permission_ref`. " +
+		"The local provider is deterministic and no-key; the optional DiscoLike adapter uses `DISCOLIKE_API_KEY`. " +
+		"Results are namespaced under `company_enrich`. Audit records include the domain, tool, status, legal basis, and limits.",
 	}
 
 	return &Registry{modules: modules, docs: docs}

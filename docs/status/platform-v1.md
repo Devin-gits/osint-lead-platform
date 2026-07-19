@@ -15,7 +15,7 @@ This doc describes what works today in the `main` branch, how to run it, and wha
 | `domain-intel` | available | `domain` | Go web-check reimplementation + optional theHarvester | DNS/TLS/HTTP/WHOIS + optional theHarvester subprocess for hosts/emails. |
 | `social-footprint` | available | `email` (uses `domain_intel.harvester` if present) | Maigret Python wrapper | Derives up to 3 handles and checks a curated platform allow-list. Degrades to `unknown`/`skipped` if Python/wrapper missing. |
 | `extraction` | available | `url` + `permission_ref` | Crawl4AI 0.9.2 Python wrapper (default); optional Firecrawl | Fetches a public page and extracts low-risk fields (title, description, company name, emails, phones, social links, contact URLs). Requires a public `url`; `permission_ref` is mandatory. |
-| `company-enrich` | planned | — | — | Not wired. |
+| `company-enrich` | available | `domain`/`company`/`url` + `permission_ref` | `company-enrich/local` (deterministic); optional DiscoLike adapter via `DISCOLIKE_API_KEY` | Enriches company firmographics. Control-plane wired in Pass 3C; UI tab is Pass 3D. |
 
 ### UI screens (`ui/web-console`)
 
@@ -169,7 +169,6 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 - LinkedIn scraping or profile-field extraction beyond public links found on a page.
 - Reverse-image / deep account discovery (GHunt-style).
 - Real auth/SSO or CRM connector wiring.
-- `company-enrich` execution.
 
 ---
 
@@ -188,6 +187,6 @@ Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `
 
 - `crm_ready` stage policy and CRM export trigger.
 - Extend risk scoring to include `domain_intel` and `social_footprint` signals; define a `risk_score` algorithm if needed.
-- `company-enrich`: Stage 2 plan complete (`docs/decisions/company-enrich-stage-2-plan.md`); implementation blocked until the GO checklist in that plan is approved by a human reviewer.
+- `company-enrich`: available in control-plane; UI Company tab is Pass 3D.
 - Async worker for long-running Maigret/theHarvester batch jobs.
 - Retention/deletion enforcement in the backend.

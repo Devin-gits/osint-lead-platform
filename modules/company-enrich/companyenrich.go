@@ -248,17 +248,14 @@ func (e *Enricher) Enrich(ctx context.Context, in Input) (Result, []AuditRecord)
 	switch {
 	case fieldsSatisfied(merged, defaultP0()):
 		res.Status = "ok"
-	case hasUsefulData(merged):
-		res.Status = "partial"
 	case errMsg != "":
 		res.Status = "error"
 		res.Error = errMsg
 	default:
 		res.Status = "partial"
-		res.Error = "no useful enrichment data returned"
-	}
-	if errMsg != "" && res.Status == "ok" {
-		res.Error = errMsg
+		if !hasUsefulData(merged) && res.Error == "" {
+			res.Error = "no useful enrichment data returned"
+		}
 	}
 
 	res.Confidence = confidenceFor(merged)
@@ -304,16 +301,6 @@ func domainFromURL(raw string) string {
 		s = s[:idx]
 	}
 	return strings.ToLower(strings.TrimSpace(s))
-}
-
-func humanizeDomain(domain string) string {
-	parts := strings.Split(domain, ".")
-	if len(parts) == 0 {
-		return domain
-	}
-	base := parts[0]
-	base = strings.Title(base)
-	return base
 }
 
 func emptyFields() Fields {

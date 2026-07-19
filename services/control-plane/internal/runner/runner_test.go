@@ -510,3 +510,238 @@ func TestRunner_Extraction_Success(t *testing.T) {
 		t.Fatalf("expected audit tool_version")
 	}
 }
+
+func TestRunner_CompanyEnrich_MissingPermissionRef(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+
+	lead := models.Lead{ID: util.NewID(), Domain: "example.com", Company: "Example"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"company-enrich"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["company_enrich"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected company_enrich result, got %T", updated.Results["company_enrich"])
+	}
+	if ev["status"] != "skipped" {
+		t.Fatalf("expected skipped status, got %v", ev["status"])
+	}
+	if !strings.Contains(ev["reason"].(string), "permission_ref") {
+		t.Fatalf("expected missing permission_ref reason, got %v", ev["reason"])
+	}
+	if updated.Stage != models.StageRaw {
+		t.Fatalf("expected stage raw on skip, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "company-enrich" && e.Status == "skipped" && e.LegalBasis == models.LegalBasisGDPR {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected company-enrich skipped audit event with legal basis, got %+v", events)
+	}
+}
+
+func TestRunner_CompanyEnrich_Success(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+
+	lead := models.Lead{ID: util.NewID(), Domain: "example.com", Company: "Example", PermissionRef: "T-1"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"company-enrich"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["company_enrich"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected company_enrich result, got %T", updated.Results["company_enrich"])
+	}
+	if ev["status"] != "ok" {
+		t.Fatalf("expected ok status, got %v", ev["status"])
+	}
+
+	fields, ok := ev["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fields map, got %T", ev["fields"])
+	}
+	if fields["domain"] != "example.com" {
+		t.Fatalf("expected domain example.com, got %v", fields["domain"])
+	}
+	if fields["name"] != "Example" {
+		t.Fatalf("expected name Example, got %v", fields["name"])
+	}
+	if fields["website"] != "https://example.com" {
+		t.Fatalf("expected website https://example.com, got %v", fields["website"])
+	}
+
+	if updated.Stage != models.StageEnriched {
+		t.Fatalf("expected stage enriched, got %s", updated.Stage)
+	}
+
+	events, _, err := st.ListAuditEvents(ctx, models.AuditSearchParams{})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Module == "company-enrich" && e.LegalBasis == models.LegalBasisGDPR && e.Subject.Domain == "example.com" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected company-enrich audit event with legal basis and domain subject, got %+v", events)
+	}
+}
+
+func TestRunner_CompanyEnrich_DomainOnlyPartial(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+
+	lead := models.Lead{ID: util.NewID(), Domain: "example.com", PermissionRef: "T-1"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"company-enrich"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["company_enrich"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected company_enrich result, got %T", updated.Results["company_enrich"])
+	}
+	if ev["status"] != "partial" {
+		t.Fatalf("expected partial status, got %v", ev["status"])
+	}
+
+	fields, ok := ev["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fields map, got %T", ev["fields"])
+	}
+	if fields["domain"] != "example.com" {
+		t.Fatalf("expected domain example.com, got %v", fields["domain"])
+	}
+	if fields["name"] != "" && fields["name"] != nil {
+		t.Fatalf("expected empty name for domain-only, got %v", fields["name"])
+	}
+
+	if updated.Stage != models.StageRaw {
+		t.Fatalf("expected stage raw when partial, got %s", updated.Stage)
+	}
+}
+
+func TestRunner_CompanyEnrich_ReusesExtraction(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+
+	lead := models.Lead{
+		ID:            util.NewID(),
+		Domain:        "example.com",
+		PermissionRef: "T-1",
+		Results: map[string]any{
+			"extraction": map[string]any{
+				"status": "ok",
+				"fields": map[string]any{
+					"company_name": "Example, Inc.",
+					"description":  "Widgets for everyone.",
+				},
+			},
+		},
+	}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	updated, err := r.RunSingle(ctx, lead.ID, models.RunModulesRequest{
+		Modules: []string{"company-enrich"},
+	})
+	if err != nil {
+		t.Fatalf("run modules: %v", err)
+	}
+
+	ev, ok := updated.Results["company_enrich"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected company_enrich result, got %T", updated.Results["company_enrich"])
+	}
+	if ev["status"] != "ok" {
+		t.Fatalf("expected ok status, got %v", ev["status"])
+	}
+
+	fields, ok := ev["fields"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected fields map, got %T", ev["fields"])
+	}
+	if fields["name"] != "Example, Inc." {
+		t.Fatalf("expected name from extraction, got %v", fields["name"])
+	}
+	if fields["description"] != "Widgets for everyone." {
+		t.Fatalf("expected description from extraction, got %v", fields["description"])
+	}
+
+	if updated.Stage != models.StageEnriched {
+		t.Fatalf("expected stage enriched, got %s", updated.Stage)
+	}
+}
+
+func TestRunner_CompanyEnrich_Batch(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	r := New(st, 0)
+
+	lead := models.Lead{ID: util.NewID(), Domain: "example.com", Company: "Example", PermissionRef: "T-1"}
+	if _, err := st.CreateLead(ctx, lead); err != nil {
+		t.Fatalf("create lead: %v", err)
+	}
+
+	run, err := r.RunBatch(ctx, models.PipelineRunRequest{
+		LeadIDs: []string{lead.ID},
+		Modules: []string{"company-enrich"},
+	})
+	if err != nil {
+		t.Fatalf("run batch: %v", err)
+	}
+	if run.Status != "completed" {
+		t.Fatalf("expected run completed, got %s", run.Status)
+	}
+
+	updated, err := st.GetLead(ctx, lead.ID)
+	if err != nil {
+		t.Fatalf("get lead: %v", err)
+	}
+	ev, ok := updated.Results["company_enrich"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected company_enrich result, got %T", updated.Results["company_enrich"])
+	}
+	if ev["status"] != "ok" {
+		t.Fatalf("expected ok status, got %v", ev["status"])
+	}
+}

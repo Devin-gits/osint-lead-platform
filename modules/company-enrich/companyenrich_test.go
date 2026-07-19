@@ -108,9 +108,12 @@ func TestLocalOnlyPartial(t *testing.T) {
 		Domain:        "example.com",
 		PermissionRef: "DEMO-1",
 	})
-	// No company input means local will humanize domain as "Example" so status ok.
-	if res.Status != "ok" {
-		t.Errorf("status = %q, want ok", res.Status)
+	// No company/extraction input means no company name can be derived honestly.
+	if res.Status != "partial" {
+		t.Errorf("status = %q, want partial", res.Status)
+	}
+	if res.Fields.Name != "" {
+		t.Errorf("name should be empty for domain-only, got %q", res.Fields.Name)
 	}
 }
 

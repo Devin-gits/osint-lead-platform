@@ -161,10 +161,11 @@ func fieldsSatisfied(f Fields, required []string) bool {
 	return true
 }
 
-// hasUsefulData returns true if at least one field beyond the lookup key is present.
+// hasUsefulData returns true if at least one enrichment field is present.
 func hasUsefulData(f Fields) bool {
-	return f.Name != "" || f.Description != "" || f.LegalName != "" || f.Founded != nil ||
-		f.EmployeeCount != nil || f.EmployeeCountRange != "" || f.Headquarters != nil ||
+	return f.Domain != "" || f.Name != "" || f.Website != "" || f.Description != "" ||
+		f.LegalName != "" || f.Founded != nil || f.EmployeeCount != nil ||
+		f.EmployeeCountRange != "" || f.Headquarters != nil ||
 		len(f.Industry) > 0 || len(f.TechStack) > 0 || len(f.SocialLinks) > 0
 }
 
