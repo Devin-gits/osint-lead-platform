@@ -67,10 +67,10 @@ Your pipeline is effectively: **Ad/Website → raw lead (name, email, phone, com
 | Repo | ★ | Updated | License | Why it matters |
 |---|---|---|---|---|
 | [Lead-Orchestra/awesome-b2b-leads](https://github.com/Lead-Orchestra/awesome-b2b-leads) | 15 | 2026-07-12 | MIT-ish | Curated meta-list mapping the **entire commercial B2B enrichment stack** (Clearbit, Apollo, ZoomInfo, People Data Labs, Clay, FullContact, NeverBounce/ZeroBounce/Kickbox for email, Bright Data/Oxylabs/ScraperAPI for proxies, plus n8n workflow templates). Use this as your reference map for the paid-API layer you'll wrap around the OSS core. |
-| [codyschneiderx/waterfall-gtm](https://github.com/codyschneiderx/waterfall-gtm) | 32 | 2026-06-21 | MIT | Open-source "waterfall" enrichment pattern — call provider A, fall back to B/C only on miss, to control enrichment-API cost. Directly reusable architecture for your cost-conscious enrichment pipeline. |
+| [codyschneiderx/waterfall-gtm](https://github.com/codyschneiderx/waterfall-gtm) | 32 | 2026-01-31 | MIT | Open-source "waterfall" enrichment pattern — call provider A, fall back to B/C only on miss, to control enrichment-API cost. Directly reusable architecture for your cost-conscious enrichment pipeline. Two-commit single-author demo; see `evaluations/waterfall-gtm.md`. |
 | [rqcai200/lead-enrichment-scoring](https://github.com/rqcai200/lead-enrichment-scoring) | 23 | 2026-07-07 | MIT | Self-hosted LinkedIn-based enrichment + scoring positioned as a cheap Clay alternative — good reference implementation. |
 | [mattvinall/Quick-Enrich-Tools](https://github.com/mattvinall/Quick-Enrich-Tools) | 3 | 2026-06-05 | MIT | Six small, cloneable, self-hostable enrichment tools — good for cannibalizing specific functions rather than adopting wholesale. |
-| [rahulchhabria/local-enrichment-tool](https://github.com/rahulchhabria/local-enrichment-tool) | 4 | 2026-03-24 | MIT | AI-powered domain → firmographic/technographic/hiring-data enrichment, runs locally. |
+| [rahulchhabria/local-enrichment-tool](https://github.com/rahulchhabria/local-enrichment-tool) | 4 | 2026-02-16 | MIT | AI-powered domain → firmographic/technographic/hiring-data enrichment, runs locally. Single-author/AI-generated one-day demo; uses Anthropic LLM and includes LinkedIn public-search scraping intent. See `evaluations/local-enrichment-tool.md`. |
 
 ## 7. Web data-extraction infrastructure (pulling data off ad landing pages & sites)
 
