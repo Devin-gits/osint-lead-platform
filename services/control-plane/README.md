@@ -42,6 +42,10 @@ leads, audit events, and pipeline runs.
 | `FIRECRAWL_BASE_URL` | `https://api.firecrawl.dev/v1` | Firecrawl API base URL |
 | `DOMAIN_INTEL_HARVESTER_BIN` | `theHarvester` (on PATH) | Override the theHarvester executable used by `domain-intel` |
 | `SOCIAL_FOOTPRINT_BACKEND` | `maigret` | Backend selector: `maigret`, `sherlock`, `both`, or `osintgram` |
+| `DISCOLIKE_API_KEY` | — | Optional API key for the `company-enrich` DiscoLike paid adapter |
+| `DISCOLIKE_BASE_URL` | `https://api.discolike.com/v1` | DiscoLike API base URL |
+| `DISCOLIKE_TIMEOUT` | `30s` | Per-request timeout for the DiscoLike adapter |
+| `COMPANY_ENRICH_GITHUB_DOMAIN_GUESS` | `0` | Set to `1`/`true` to allow weak GitHub org guessing from the domain root (disabled by default) |
 | `SOCIAL_FOOTPRINT_PYTHON` | `python3` (on PATH) | Python interpreter used to run the wrapper |
 | `SOCIAL_FOOTPRINT_WRAPPER` | `wrapper/maigret_check.py` (auto-located) | Path to the Maigret wrapper script |
 | `SOCIAL_FOOTPRINT_TIMEOUT` | `90s` | Per-handle subprocess timeout |
