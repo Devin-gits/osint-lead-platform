@@ -78,10 +78,11 @@ def validate_url(url):
 
     try:
         ipaddress.ip_address(host)
-        raise ValueError("IP-literal URLs are not allowed")
     except ValueError:
         # Not an IP address, which is what we want for public websites.
         pass
+    else:
+        raise ValueError("IP-literal URLs are not allowed")
 
     port = parsed.port
     if port is not None and port not in (80, 443):

@@ -40,7 +40,7 @@ The following tools were evaluated and explicitly rejected for this module:
 | Crawlab | Not adopted; distributed crawling platform, out of scope for a single-page extractor. |
 | `joeyism/linkedin_scraper` | Not adopted; GPL-3.0 license conflict, requires authenticated LinkedIn access, violates LinkedIn ToS. |
 | `initstring/linkedin2username` | Not adopted; employee enumeration and credential-based login, out of scope. |
-| `vysecurity/LinkedInt` | Not adopted; archived reconnaissance tool, no explicit license, requires credentials. |
+| `vysecurity/LinkedInt` | Not adopted; archived reconnaissance tool requiring credentials + Hunter.io API key (license found as MIT, but credential-based recon keeps it out of scope). |
 | Any LinkedIn scraping library | Not adopted; LinkedIn scraping is excluded from production per `docs/compliance.md`. |
 
 ## No vendored GPL code

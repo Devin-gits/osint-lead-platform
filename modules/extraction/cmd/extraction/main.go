@@ -6,8 +6,10 @@
 //
 // Usage:
 //
-//	echo '{"url":"https://example.com"}' | extraction
+//	echo '{"url":"https://example.com","permission_ref":"CAMP-2026-Q3-001"}' | extraction
 //	extraction --url https://example.com --timeout 30s --backend firecrawl
+//
+// permission_ref must be provided in the stdin JSON; there is no CLI flag for it.
 //
 // Exit code is 0 whenever a well-formed lead was read and a record emitted —
 // including extraction failures, which are reported in-band as
