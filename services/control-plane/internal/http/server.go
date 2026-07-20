@@ -24,6 +24,7 @@ func NewServer(s store.Store, r *runner.Runner, reg *registry.Registry) *Server 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("POST /api/leads", s.handleCreateLead)
 	mux.HandleFunc("GET /api/leads", s.handleListLeads)
 	mux.HandleFunc("GET /api/leads/{id}", s.handleGetLead)
