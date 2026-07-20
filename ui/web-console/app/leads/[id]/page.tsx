@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink, Download, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
-import { useLead, useRunLeadModules, useRunStatus, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead, useLeadRisk } from "@/lib/api/hooks";
+import { isRunID, useLead, useRunLeadModules, useRunStatus, useModules, useLeadReadiness, usePromoteLead, useDemoteLead, useExportLead, useLeadRisk } from "@/lib/api/hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
@@ -74,12 +74,13 @@ export default function LeadDetailPage() {
   const queryClient = useQueryClient();
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const completedRunId = useRef<string | null>(null);
-  const { data: runStatus } = useRunStatus(activeRunId ?? undefined);
+  const pollableRunId = isRunID(activeRunId) ? activeRunId : undefined;
+  const { data: runStatus } = useRunStatus(pollableRunId);
   const [transitioning, setTransitioning] = useState(false);
 
   // Sync active run id from the lead record and clear it when the run finishes.
   useEffect(() => {
-    if (!activeRunId && lead?.active_run_id && lead.active_run_id !== completedRunId.current) {
+    if (!activeRunId && isRunID(lead?.active_run_id) && lead.active_run_id !== completedRunId.current) {
       setActiveRunId(lead.active_run_id);
     }
   }, [lead?.active_run_id, activeRunId]);

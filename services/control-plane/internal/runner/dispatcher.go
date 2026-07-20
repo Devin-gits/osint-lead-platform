@@ -209,10 +209,6 @@ func (r *Runner) releaseActiveBatch(leadIDs []string) {
 	}
 }
 
-func (r *Runner) setActiveRun(leadID, runID string) {
-	r.activeRuns[leadID] = runID
-}
-
 func (r *Runner) worker() {
 	defer r.wg.Done()
 	for {

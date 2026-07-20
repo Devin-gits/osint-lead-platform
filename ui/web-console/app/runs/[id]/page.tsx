@@ -39,12 +39,6 @@ export default function RunDetailPage() {
   // Gentle polling while run is in non-terminal state
   const isTerminal = run?.status === "completed" || run?.status === "failed" || run?.status === "partial";
 
-  // Note: useRun uses react-query; we modify refetchInterval via the hook's options.
-  // Since we can't pass options dynamically to the existing hook, we'll use the
-  // query client refetch manually if needed. For now, the hook fetches once.
-  // A proper polling approach would require updating the hook signature — out of scope.
-  // Instead we show a hint that data may be stale for running runs.
-
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -87,7 +81,7 @@ export default function RunDetailPage() {
       {!isTerminal && (
         <div className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-foreground-secondary">
           <Clock className="h-4 w-4 shrink-0 text-primary" />
-          <span>This run is still in progress. Refresh the page to see updated status.</span>
+          <span>This run is still in progress. Status updates automatically.</span>
         </div>
       )}
 

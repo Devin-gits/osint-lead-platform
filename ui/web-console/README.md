@@ -39,6 +39,8 @@ Open [http://localhost:3000](http://localhost:3000). The root route (`/`) redire
 
 Never run `npm run build` while `npm run dev` uses the same `.next` directory; it causes `ENOENT` `app-build-manifest` 500 errors.
 
+Bulk module actions return `202` and show an active-run banner on `/leads`; the UI polls its run status, refreshes the leads list, and dismisses the banner when the run reaches a terminal state.
+
 ### Manual smoke test
 
 With the control-plane running on `http://localhost:8080`:
