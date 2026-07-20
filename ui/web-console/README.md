@@ -37,6 +37,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). The root route (`/`) redirects to `/command-center`. The API is expected at `http://localhost:8080` by default; set `NEXT_PUBLIC_API_BASE_URL` to override.
 
+Never run `npm run build` while `npm run dev` uses the same `.next` directory; it causes `ENOENT` `app-build-manifest` 500 errors.
+
 ### Manual smoke test
 
 With the control-plane running on `http://localhost:8080`:

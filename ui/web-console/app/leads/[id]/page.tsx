@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Play, RefreshCw, AlertTriangle, AlertCircle, ExternalLink, Download, TrendingUp, TrendingDown } from "lucide-react";
 import Link from "next/link";
@@ -73,28 +73,36 @@ export default function LeadDetailPage() {
   const { addToast } = useToast();
   const queryClient = useQueryClient();
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const completedRunId = useRef<string | null>(null);
   const { data: runStatus } = useRunStatus(activeRunId ?? undefined);
   const [transitioning, setTransitioning] = useState(false);
 
   // Sync active run id from the lead record and clear it when the run finishes.
   useEffect(() => {
-    if (activeRunId) return;
-    if (lead?.active_run_id) {
+    if (!activeRunId && lead?.active_run_id && lead.active_run_id !== completedRunId.current) {
       setActiveRunId(lead.active_run_id);
     }
   }, [lead?.active_run_id, activeRunId]);
 
   useEffect(() => {
-    if (!runStatus) return;
-    if (runStatus.status === "completed" || runStatus.status === "partial" || runStatus.status === "failed") {
-      setActiveRunId(null);
-      queryClient.invalidateQueries({ queryKey: ["lead", id] });
-      queryClient.invalidateQueries({ queryKey: ["risk", id] });
-      queryClient.invalidateQueries({ queryKey: ["readiness", id] });
-      queryClient.invalidateQueries({ queryKey: ["audit"] });
-      addToast(`Run ${runStatus.status}`, runStatus.status === "completed" ? "success" : "warning");
-    }
+    if (!runStatus || (runStatus.status !== "completed" && runStatus.status !== "partial" && runStatus.status !== "failed")) return;
+    if (completedRunId.current === runStatus.id) return;
+
+    completedRunId.current = runStatus.id;
+    setActiveRunId(null);
+    queryClient.invalidateQueries({ queryKey: ["lead", id] });
+    queryClient.invalidateQueries({ queryKey: ["risk", id] });
+    queryClient.invalidateQueries({ queryKey: ["readiness", id] });
+    queryClient.invalidateQueries({ queryKey: ["audit"] });
+    addToast(`Run ${runStatus.status}`, runStatus.status === "completed" ? "success" : "warning");
   }, [runStatus, id, queryClient, addToast]);
+
+  useEffect(() => {
+    if (activeRunId && !lead?.active_run_id && completedRunId.current === activeRunId) {
+      setActiveRunId(null);
+      completedRunId.current = null;
+    }
+  }, [lead?.active_run_id, activeRunId]);
 
   const handlePromote = async () => {
     setTransitioning(true);

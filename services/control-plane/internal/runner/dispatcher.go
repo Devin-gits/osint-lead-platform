@@ -12,10 +12,10 @@ import (
 
 // job is a queued module execution.
 type job struct {
-	runID    string
-	leadID   string // empty for batch jobs
-	single   *models.RunModulesRequest
-	batch    *models.PipelineRunRequest
+	runID  string
+	leadID string // empty for batch jobs
+	single *models.RunModulesRequest
+	batch  *models.PipelineRunRequest
 }
 
 // Start launches the worker goroutine pool. It must be called before any job is
@@ -84,10 +84,6 @@ func (r *Runner) SubmitSingle(ctx context.Context, leadID string, req models.Run
 		permissionRef = lead.PermissionRef
 	}
 
-	if err := r.reserveActive(leadID); err != nil {
-		return models.PipelineRun{}, err
-	}
-
 	run := models.PipelineRun{
 		ID:              util.NewID(),
 		Type:            "single",
@@ -97,6 +93,10 @@ func (r *Runner) SubmitSingle(ctx context.Context, leadID string, req models.Run
 		ModulesExecuted: req.Modules,
 		LegalBasis:      legalBasis,
 		PermissionRefs:  uniqueStrings(append([]string{}, permissionRef)),
+	}
+
+	if err := r.reserveActive(leadID, run.ID); err != nil {
+		return models.PipelineRun{}, err
 	}
 
 	if _, err := r.store.CreatePipelineRun(ctx, run); err != nil {
@@ -139,18 +139,6 @@ func (r *Runner) SubmitBatch(ctx context.Context, req models.PipelineRunRequest)
 		legalBasis = models.LegalBasisGDPR
 	}
 
-	for _, leadID := range req.LeadIDs {
-		if err := r.reserveActive(leadID); err != nil {
-			for _, lid := range req.LeadIDs {
-				if lid == leadID {
-					break
-				}
-				r.releaseActive(lid)
-			}
-			return models.PipelineRun{}, err
-		}
-	}
-
 	run := models.PipelineRun{
 		ID:              util.NewID(),
 		Type:            "batch",
@@ -161,6 +149,19 @@ func (r *Runner) SubmitBatch(ctx context.Context, req models.PipelineRunRequest)
 		LegalBasis:      legalBasis,
 		PermissionRefs:  uniqueStrings(append([]string{}, req.PermissionRef)),
 	}
+
+	for _, leadID := range req.LeadIDs {
+		if err := r.reserveActive(leadID, run.ID); err != nil {
+			for _, lid := range req.LeadIDs {
+				if lid == leadID {
+					break
+				}
+				r.releaseActive(lid)
+			}
+			return models.PipelineRun{}, err
+		}
+	}
+
 	if _, err := r.store.CreatePipelineRun(ctx, run); err != nil {
 		r.releaseActiveBatch(req.LeadIDs)
 		return models.PipelineRun{}, fmt.Errorf("create run: %w", err)
@@ -190,11 +191,11 @@ var (
 	ErrRunInProgress = fmt.Errorf("lead already has an active run")
 )
 
-func (r *Runner) reserveActive(leadID string) error {
+func (r *Runner) reserveActive(leadID, runID string) error {
 	if r.activeRuns[leadID] != "" {
 		return ErrRunInProgress
 	}
-	r.activeRuns[leadID] = "reserved"
+	r.activeRuns[leadID] = runID
 	return nil
 }
 
