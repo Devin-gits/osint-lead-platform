@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -11,7 +11,9 @@ import {
   Loader2,
   AlertTriangle,
 } from "lucide-react";
-import { useLeads, useModules, useRunPipeline } from "@/lib/api/hooks";
+import { useLeads, useModules, useRunPipeline, useRunStatus } from "@/lib/api/hooks";
+import { ApiClientError } from "@/lib/api/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -95,6 +97,7 @@ function useAvailableModules() {
 export default function LeadsPage() {
   const router = useRouter();
   const { addToast } = useToast();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState({
     stage: "",
     risk: "",
@@ -104,10 +107,12 @@ export default function LeadsPage() {
     page_size: 25,
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [activeBulkRunId, setActiveBulkRunId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useLeads(filters);
   const availableModules = useAvailableModules();
   const pipeline = useRunPipeline();
+  const { data: bulkRunStatus } = useRunStatus(activeBulkRunId ?? undefined);
 
   const leads: LeadSummary[] = data?.data ?? [];
   const meta = data?.meta;
@@ -120,6 +125,18 @@ export default function LeadsPage() {
 
   const canRunBulk =
     selected.size > 0 && selectedLeads.every((l) => l.permission_ref);
+  const bulkRunActive =
+    !!activeBulkRunId &&
+    (!bulkRunStatus || bulkRunStatus.status === "queued" || bulkRunStatus.status === "running");
+
+  useEffect(() => {
+    if (!activeBulkRunId || !bulkRunStatus) return;
+    if (bulkRunStatus.status !== "completed" && bulkRunStatus.status !== "partial" && bulkRunStatus.status !== "failed") return;
+
+    setActiveBulkRunId(null);
+    queryClient.invalidateQueries({ queryKey: ["leads"] });
+    addToast(`Bulk run ${bulkRunStatus.status}`, bulkRunStatus.status === "completed" ? "success" : "warning");
+  }, [activeBulkRunId, bulkRunStatus, queryClient, addToast]);
 
   const updateFilter = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value, page: 1 }));
@@ -162,6 +179,7 @@ export default function LeadsPage() {
         lead_ids: Array.from(selected),
         modules: [moduleName],
       });
+      setActiveBulkRunId(res.run_id);
       addToast(
         <span>
           Started {displayName} for {selected.size} lead(s).{" "}
@@ -174,8 +192,11 @@ export default function LeadsPage() {
         </span>,
         "success"
       );
-      clearSelection();
     } catch (err) {
+      if (err instanceof ApiClientError && err.status === 409) {
+        addToast("A selected lead already has an active run. Wait for it to finish before starting a bulk run.", "warning");
+        return;
+      }
       addToast(
         err instanceof Error ? err.message : "Pipeline run failed",
         "danger"
@@ -218,6 +239,24 @@ export default function LeadsPage() {
           Create lead
         </Link>
       </PageHeader>
+
+      {activeBulkRunId && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 border-primary/20 bg-primary/5">
+          <div className="text-sm text-foreground">
+            <span className="font-medium">Active bulk run</span>{" "}
+            <span className="font-mono text-xs">{activeBulkRunId.slice(0, 8)}</span>{" "}
+            <span className="capitalize text-foreground-secondary">
+              {bulkRunStatus?.status || "queued"}
+            </span>
+          </div>
+          <Link
+            href={`/runs/${activeBulkRunId}`}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            View run
+          </Link>
+        </Card>
+      )}
 
       {isLoading ? (
         <Card className="p-4">
@@ -314,7 +353,7 @@ export default function LeadsPage() {
                     key={m.name}
                     size="sm"
                     variant="secondary"
-                    disabled={!canRunBulk || pipeline.isPending}
+                    disabled={!canRunBulk || pipeline.isPending || bulkRunActive}
                     onClick={() => runBulk(m.name, m.display_name)}
                     title={
                       canRunBulk

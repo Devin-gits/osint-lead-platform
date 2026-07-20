@@ -39,6 +39,15 @@ const MODULES_KEY = "modules";
 const AUDIT_KEY = "audit";
 const RUNS_KEY = "runs";
 const COMPLIANCE_KEY = "compliance";
+const RUN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isRunID(value?: string | null): value is string {
+  return !!value && RUN_ID_PATTERN.test(value);
+}
+
+function isActiveRun(status?: PipelineRun["status"]) {
+  return status === "queued" || status === "running";
+}
 
 export function useLeads(params: LeadSearchParams = {}) {
   return useQuery<ListResponse<LeadSummary[]>, ApiClientError>({
@@ -104,6 +113,9 @@ export function useRuns(params: { page?: number; page_size?: number } = {}) {
       const meta: ListMeta = res.meta ?? { page: 1, page_size: 25, total: 0 };
       return { data: res.data, meta };
     },
+    refetchInterval: (query) =>
+      query.state.data?.data.some((run) => isActiveRun(run.status)) ? 1500 : false,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -111,11 +123,13 @@ export function useRun(id?: string) {
   return useQuery<PipelineRun>({
     queryKey: [RUNS_KEY, id],
     queryFn: async () => {
-      if (!id) throw new ApiClientError("missing_id", "No run id provided", 400);
+      if (!isRunID(id)) throw new ApiClientError("invalid_id", "Invalid run id", 400);
       const res = await apiGet<PipelineRun>(`/api/runs/${id}`);
       return res.data;
     },
-    enabled: !!id,
+    enabled: isRunID(id),
+    refetchInterval: (query) => (isActiveRun(query.state.data?.status) ? 1500 : false),
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -181,16 +195,15 @@ export function useRunStatus(runId?: string) {
   return useQuery<PipelineRun, ApiClientError>({
     queryKey: ["run", runId],
     queryFn: async () => {
-      if (!runId) throw new ApiClientError("missing_id", "No run id provided", 400);
+      if (!isRunID(runId)) throw new ApiClientError("invalid_id", "Invalid run id", 400);
       const res = await apiGet<PipelineRun>(`/api/runs/${runId}`);
       return res.data;
     },
-    enabled: !!runId,
+    enabled: isRunID(runId),
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 1000;
-      if (data.status === "queued" || data.status === "running") return 1000;
-      return false;
+      return isActiveRun(data.status) ? 1000 : false;
     },
     refetchOnWindowFocus: false,
   });
