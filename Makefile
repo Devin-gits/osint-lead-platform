@@ -1,14 +1,16 @@
 # Convenience targets for local demo and smoke tests.
 #
-# The control-plane and UI are started in separate terminals by design.
+# The combined demo uses background processes; separate targets remain available.
 # Set EXTRACTION_CRAWL4AI_PYTHON to a venv Python for the full extraction ok path.
 
-.PHONY: help demo-api demo-ui smoke smoke-ok smoke-platform smoke-api smoke-crm smoke-risk smoke-async install-extraction-venv test-go test-ui
+.PHONY: help demo demo-down demo-api demo-ui smoke smoke-ok smoke-platform smoke-api smoke-crm smoke-risk smoke-async install-extraction-venv test-go test-ui
 
 help:
 	@echo "Available targets:"
 	@echo "  make test-go             - run all Go module tests + control-plane tests"
 	@echo "  make test-ui             - run UI typecheck, lint, and build"
+	@echo "  make demo                - start loopback API + UI in the background"
+	@echo "  make demo-down           - stop services started by make demo"
 	@echo "  make demo-api            - start control-plane on :8080"
 	@echo "  make demo-api-ok         - start control-plane with extraction venv"
 	@echo "  make demo-ui             - start Next.js UI on :3000"
@@ -21,9 +23,15 @@ help:
 	@echo "  make smoke-async         - run async worker queue smoke (API must be up)"
 	@echo "  make install-extraction-venv - create modules/extraction/.venv with Crawl4AI"
 
+demo:
+	@./scripts/demo-up.sh
+
+demo-down:
+	@./scripts/demo-down.sh
+
 demo-api:
 	@echo "Starting control-plane on http://localhost:8080"
-	@cd services/control-plane && go run ./cmd/server
+	@cd services/control-plane && LISTEN_HOST=127.0.0.1 go run ./cmd/server
 
 demo-api-ok:
 	@if [ -z "${EXTRACTION_CRAWL4AI_PYTHON}" ]; then \

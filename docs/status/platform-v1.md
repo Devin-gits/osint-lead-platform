@@ -1,204 +1,53 @@
-# OSINT Lead Platform — v1 Status
+# OSINT Lead Platform — v1 status
 
-This doc describes what works today in the `main` branch, how to run it, and what is intentionally out of scope or still open. It is the answer to "what can I actually run right now?"
+This is the shipped `main`-branch truth for local operators. “Available” means the control plane exposes the module; it does not mean every optional third-party executable is installed or every network-dependent check will be green.
 
----
+## Capability matrix
 
-## What works today
+| Capability | Status | Needs | Notes |
+|---|---|---|---|
+| `email-validate` | available without optional tools | email; DNS/network for MX signal | Syntax, disposable, role, and provider checks work without a key. SMTP probing is disabled, so `deliverable` can honestly be `unknown`. |
+| `phone-validate` | available offline | phone | libphonenumber parsing is local. Optional numverify carrier lookup is not required for the demo. |
+| `domain-intel` | available with network-dependent checks | domain; network; optional `theHarvester` on `PATH` | Go DNS/TLS/HTTP/WHOIS checks run directly. Missing `theHarvester` yields a structured sub-result rather than a fake success. |
+| `social-footprint` | available with optional Python tooling | email; Maigret Python wrapper for useful live results | Without the wrapper/Python it returns structured `unknown` or `skipped`; it is not a fully green offline demo path. |
+| `extraction` | available with optional Python tooling | public URL, `permission_ref`, Crawl4AI Python environment | Missing Crawl4AI returns a structured `error`; missing `permission_ref` returns `skipped`. Optional Firecrawl is not required. |
+| `company-enrich` | available locally | domain, company, or URL; `permission_ref` | `company-enrich/local` is deterministic and works without a key. The optional DiscoLike adapter needs `DISCOLIKE_API_KEY`. |
+| async runs | shipped | `CONTROL_PLANE_WORKERS` optional; default `2` | `POST /api/leads/{id}/run` and `POST /api/pipelines/run` return `202` with `run_id`; poll `GET /api/runs/{id}`. The queue is in-process and jobs are lost on restart. |
+| CRM-ready policy | local policy only | validated, permissioned lead | Promotion/demotion/export are local policy and a JSON export stub. There is no real CRM or HubSpot connector. |
+| `risk_score` v2 | shipped | module results and lead fields | Deterministic 0–100 score with `low`, `medium`, `high`, or `unknown` level. |
 
-### Wired modules (available in `services/control-plane`)
-
-| Module | Status | Minimum input | Backing tools | Notes |
-|---|---|---|---|---|
-| `email-validate` | available | `email` | AfterShip/email-verifier | Syntax/MX/disposable/role/free checks. SMTP probe disabled, so `deliverable` is often `unknown` while `status` is `ok`. |
-| `phone-validate` | available | `phone` | libphonenumber | Offline parse; optional numverify carrier lookup. Phone numbers are redacted in audit logs. |
-| `domain-intel` | available | `domain` | Go web-check reimplementation + optional theHarvester | DNS/TLS/HTTP/WHOIS + optional theHarvester subprocess for hosts/emails. |
-| `social-footprint` | available | `email` (uses `domain_intel.harvester` if present) | Maigret Python wrapper | Derives up to 3 handles and checks a curated platform allow-list. Degrades to `unknown`/`skipped` if Python/wrapper missing. |
-| `extraction` | available | `url` + `permission_ref` | Crawl4AI 0.9.2 Python wrapper (default); optional Firecrawl | Fetches a public page and extracts low-risk fields (title, description, company name, emails, phones, social links, contact URLs). Requires a public `url`; `permission_ref` is mandatory. |
-| `company-enrich` | available | `domain`/`company`/`url` + `permission_ref` | `company-enrich/local` (deterministic); optional DiscoLike adapter via `DISCOLIKE_API_KEY` | Enriches company firmographics. Control-plane and UI Company tab wired. |
-
-### UI screens (`ui/web-console`)
-
-- `/` redirects to `/leads`.
-- `/leads` — list, filters (stage, risk, module_status, q), stage funnel, multi-select bulk actions for every `available` module, live pagination.
-- `/leads/[id]` — raw card with `url` field, module result panels (Email/Phone/Domain/Social/Extraction/Company), async run banner with live status polling, readiness card with promote/demote/export actions, risk score/level with factor list, expandable audit panel with `legal_basis` and `raw_stderr_json`, per-module "Run anyway" actions.
-- `/modules` — grouped by `available` / `in_development` / `planned`.
-- `/modules/[name]` — module docs from the registry.
-- `/runs` and `/runs/[id]` — pipeline run timeline and detail.
-- `/compliance` — hard rules, risk table, checklist, exclusions.
-- `/settings` — environment badge, role selector, CRM/SSO/API/retention stubs.
-
-### CI
-
-- `.github/workflows/ui.yml` — `npm ci`, `typecheck`, `lint`, `build` for `ui/web-console`.
-- `.github/workflows/control-plane.yml` — `go mod download`, `go vet ./...`, `go test ./...`, `go test -short ./...`, `go build ./...` for `services/control-plane`.
-- `.github/workflows/modules.yml` — matrix job that runs `go vet ./...`, `go test -short ./...`, `go test ./...`, and `go build ./...` for every module with a `go.mod` (`company-enrich`, `domain-intel`, `email-validate`, `extraction`, `phone-validate`, `social-footprint`).
-
----
-
-## How to run
-
-The fastest path is the root `Makefile`:
+## Demo path
 
 ```bash
-# Terminal 1 — control-plane API (http://localhost:8080)
-make demo-api
-
-# Terminal 2 — Next.js UI (http://localhost:3000)
-cd ui/web-console && npm install   # once
-make demo-ui
+make demo
+# UI:  http://localhost:3000/leads
+# API: http://localhost:8080/healthz
+# Stop: make demo-down
 ```
 
-Then open [http://localhost:3000](http://localhost:3000). The UI expects the API at `http://localhost:8080`; override with `NEXT_PUBLIC_API_BASE_URL`.
+`make demo` starts the memory-backed control plane and Next.js development UI on `127.0.0.1` only. It refuses to overwrite services already using ports 8080 or 3000. Logs and process IDs are stored under `${TMPDIR:-/tmp}/osint-lead-platform-demo`.
 
-### Automated tests (no API server needed)
+Do not run `npm run build` while the demo UI's `npm run dev` process uses the same `.next` directory; Next may emit `ENOENT` `app-build-manifest` 500 errors.
+
+## Local quality and smoke gates
 
 ```bash
-make test-go   # all module tests + control-plane tests
-make test-ui   # UI typecheck, lint, and production build
+make test-go
+make test-ui
+make smoke-api && make smoke-async && make smoke-platform
 ```
 
-### One-shot operator smoke
+`smoke-platform` accepts a structured extraction error when Crawl4AI is not installed. Use `make install-extraction-venv` and `EXTRACTION_CRAWL4AI_PYTHON="$PWD/modules/extraction/.venv/bin/python" make demo-api-ok` only when an extraction `ok` path is required.
 
-With the API running:
+## Operator behavior
 
-```bash
-make smoke-api    # company-enrich ok/partial/missing-perm_ref paths
-make smoke-crm    # crm_ready promote/demote/export stub (requires API)
-make smoke-risk   # deterministic risk_score v2 sanity check (requires API)
-make smoke-async  # async worker queue sanity check (requires API)
-make smoke        # extraction smoke (requires API)
-make smoke-ok     # extraction smoke, requires ok/partial
-```
+- Lead and bulk module submissions are asynchronous. A `202` response contains a job reference, **not** the updated lead body.
+- Lead detail polls an active UUID-shaped `active_run_id`; the `/leads` bulk banner polls its run and refreshes the list on terminal status.
+- `/runs` and `/runs/{id}` poll while visible runs are `queued` or `running`.
+- The default audit legal basis is GDPR Art.6(1)(f) legitimate interest. Extraction requires a `permission_ref`.
 
-`make smoke-api` runs `scripts/smoke-api.sh`, which verifies the module registry, creates leads, runs `company-enrich`, and checks the `ok`, `partial`, and `skipped` paths. `make smoke-crm`, `make smoke-risk`, and `make smoke-async` exercise promotion, risk-score, and async worker flows. All use deterministic local providers, so no paid API keys are required.
+## Deliberate v1 limits
 
-### Full extraction `ok` path
-
-To see `extraction.status = ok`, install Crawl4AI in a venv and point the control-plane at it:
-
-```bash
-cd modules/extraction
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-# Optional: only if Crawl4AI reports a missing browser
-playwright install chromium
-cd ../../services/control-plane
-EXTRACTION_CRAWL4AI_PYTHON="$PWD/../../modules/extraction/.venv/bin/python" go run ./cmd/server
-```
-
-Or from the repo root with the Makefile:
-
-```bash
-make install-extraction-venv
-EXTRACTION_CRAWL4AI_PYTHON="$PWD/modules/extraction/.venv/bin/python" make demo-api-ok
-```
-
-Then `make smoke` (or `make smoke-ok`) will report `ok` on public pages such as `https://example.com`.
-
-### Manual smoke test
-
-```bash
-# Create a lead with a URL and permission_ref
-LEAD=$(curl -s -X POST http://localhost:8080/api/leads \
-  -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com","permission_ref":"p-001"}' | jq -r '.data.id')
-
-# Run extraction
-curl -s -X POST "http://localhost:8080/api/leads/$LEAD/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["extraction"]}' | jq '.data.extraction'
-
-# View lead + audit events
-curl -s "http://localhost:8080/api/leads/$LEAD" | jq '.data.audit_events[0]'
-```
-
-Missing `permission_ref`:
-
-```bash
-NOPERM=$(curl -s -X POST http://localhost:8080/api/leads \
-  -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com"}' | jq -r '.data.id')
-curl -s -X POST "http://localhost:8080/api/leads/$NOPERM/run" \
-  -H 'Content-Type: application/json' \
-  -d '{"modules":["extraction"]}' | jq '.data.extraction'
-# -> { "status": "skipped", "reason": "missing permission_ref" }
-```
-
----
-
-## Env matrix
-
-### Email/phone only (fast, no external Python tools)
-
-```bash
-# services/control-plane defaults are sufficient
-go run ./cmd/server
-```
-
-### Full extraction `ok` path
-
-```bash
-export EXTRACTION_CRAWL4AI_PYTHON="$PWD/modules/extraction/.venv/bin/python"
-export EXTRACTION_TIMEOUT=45s
-cd services/control-plane && go run ./cmd/server
-```
-
-Crawl4AI must be installed in that Python environment (`modules/extraction/requirements.txt`). Playwright Chromium may also be required depending on the environment.
-
-### Full social + domain (theHarvester / Maigret)
-
-```bash
-export HTTP_WRITE_TIMEOUT=300s        # or 600s on slower networks
-export SOCIAL_FOOTPRINT_TIMEOUT=90s   # per handle; default is fine
-export SOCIAL_FOOTPRINT_BACKEND=maigret
-export SOCIAL_FOOTPRINT_PYTHON=python3
-export SOCIAL_FOOTPRINT_WRAPPER=wrapper/maigret_check.py
-export DOMAIN_INTEL_HARVESTER_BIN=theHarvester
-cd services/control-plane && go run ./cmd/server
-```
-
-Why: `social-footprint` runs up to 3 handles × 90s each plus rate limits, and `domain-intel` may invoke theHarvester. `HTTP_WRITE_TIMEOUT` must exceed the longest expected request or the server closes the connection before the runner finishes.
-
----
-
-## Compliance posture
-
-- Every module call logs an `AuditEvent` with `tool`, `checked_at`, `status`, `legal_basis` (`GDPR Art.6(1)(f) legitimate-interest`), `subject` (email/domain/phone_redacted/handle/url), and `raw_stderr_json`.
-- `permission_ref` is **mandatory** for `extraction`. Missing `permission_ref` produces a `skipped` result and audit line.
-- Phone numbers are redacted by `phone-validate` before returning to the control plane.
-- Social footprint derives public handles only; raw email/name never appears in social audit lines.
-- Extraction audit subject is the sanitized URL only; query values are redacted and userinfo stripped.
-- Curated platform allow-list in `modules/social-footprint` keeps the check bounded and ToS-respectful.
-- The compliance page and `/api/compliance/summary` expose the hard rules and exclusions.
-
----
-
-## Explicit non-goals (not in v1)
-
-- Bulk breach/leak signals in sales views.
-- LinkedIn scraping or profile-field extraction beyond public links found on a page.
-- Reverse-image / deep account discovery (GHunt-style).
-- Real auth/SSO or CRM connector wiring.
-
----
-
-## Known limitations
-
-- **Social top-level status** can be `"ok"` even when every individual handle is `"unknown"` because the runner only degrades the lead if the module itself errors; the UI panel renders per-handle status chips.
-- **Module runs are async.** `POST /api/leads/{id}/run` returns `202` immediately. Long runs execute in a worker pool; `HTTP_WRITE_TIMEOUT` no longer needs to cover Maigret multi-handle durations.
-- **crm_ready stage** requires explicit promotion via `/api/leads/{id}/promote` once readiness rules pass; the stage machine still stops at `validated` from module runs.
-- **Risk is deterministic** via `internal/risk.Compute()` using module results + lead fields; score is 0–100 and bands map to `low`/`medium`/`high`/`unknown`.
-- **Compliance summary** is static governance content (hard rules, risk table, checklist, exclusions). It does not yet return numeric stats or per-run scores.
-- **In-process queue.** The async worker pool is in-memory and single-instance; queued jobs are lost on restart. An external queue is needed for multi-replica deployments.
-
----
-
-## Backlog for v2 and beyond
-
-- `crm_ready` auto-demotion when a re-run invalidates a previously promoted lead.
-- Configurable risk weights and per-module fine-tuning.
-- `company-enrich`: fully available (module, control-plane, UI Company tab, CI, smoke runbook).
-- Durable external queue for multi-replica worker deployments.
-- Retention/deletion enforcement in the backend.
+- No durable queue, multi-instance worker coordination, real auth/SSO, real CRM connector, LinkedIn scraping, or bulk breach/leak signals.
+- Social and extraction are honest about missing optional tools instead of manufacturing positive results.
+- The memory store is appropriate for the local demo only; data disappears when the API restarts.

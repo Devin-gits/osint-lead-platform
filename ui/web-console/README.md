@@ -35,7 +35,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The root route (`/`) redirects to `/command-center`. The API is expected at `http://localhost:8080` by default; set `NEXT_PUBLIC_API_BASE_URL` to override.
+Open [http://localhost:3000](http://localhost:3000). The root route (`/`) redirects to `/command-center`. The API is expected at `http://localhost:8080` by default; set `NEXT_PUBLIC_API_BASE_URL` to override. For the one-command loopback demo and current operator path, see [the local smoke runbook](../../docs/runbooks/local-dev-smoke.md).
 
 Never run `npm run build` while `npm run dev` uses the same `.next` directory; it causes `ENOENT` `app-build-manifest` 500 errors.
 

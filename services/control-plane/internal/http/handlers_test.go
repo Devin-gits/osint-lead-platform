@@ -55,6 +55,18 @@ func waitForRun(t *testing.T, h http.Handler, id string) string {
 	return ""
 }
 
+func TestServer_Health(t *testing.T) {
+	srv := newTestServer(t)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != "{\"status\":\"ok\"}\n" {
+		t.Fatalf("unexpected body: %s", rr.Body.String())
+	}
+}
+
 func TestServer_CreateAndGetLead(t *testing.T) {
 	srv := newTestServer(t)
 	h := srv.Handler()
