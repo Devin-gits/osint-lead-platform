@@ -43,13 +43,33 @@ run_resp=$(curl -s -w "\n%{http_code}" -X POST "${BASE_URL}/api/leads/${lead_id}
 http_code=$(echo "$run_resp" | tail -n1)
 body=$(echo "$run_resp" | sed '$d')
 
-if [ "$http_code" -ge 500 ]; then
+if [ "$http_code" != "202" ]; then
   echo "ERROR: POST /api/leads/${lead_id}/run returned ${http_code}" >&2
   echo "$body" >&2
   exit 1
 fi
 
-email_validate=$(echo "$body" | jq '.data.email_validate')
+run_id=$(echo "$body" | jq -r '.data.run_id // empty')
+if [ -z "$run_id" ]; then
+  echo "ERROR: run response did not include run_id" >&2
+  echo "$body" >&2
+  exit 1
+fi
+
+for i in {1..60}; do
+  status=$(curl -s "${BASE_URL}/api/runs/${run_id}" | jq -r '.data.status // empty')
+  if [ "$status" = "completed" ] || [ "$status" = "partial" ] || [ "$status" = "failed" ]; then
+    break
+  fi
+  sleep 1
+done
+if [ "$status" != "completed" ] && [ "$status" != "partial" ] && [ "$status" != "failed" ]; then
+  echo "ERROR: run ${run_id} did not reach a terminal status" >&2
+  exit 1
+fi
+
+lead_get=$(curl -s "${BASE_URL}/api/leads/${lead_id}")
+email_validate=$(echo "$lead_get" | jq '.data.email_validate')
 echo "==> email_validate:"
 echo "$email_validate" | jq '{status, deliverable, syntax_valid, has_mx_records, is_disposable, error}'
 
